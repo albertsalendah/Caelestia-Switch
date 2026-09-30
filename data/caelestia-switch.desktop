@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Caelestia Switch
+Comment=Switch between Plasma and Caelestia KDE
+Exec=caelestia-switch-gui
+Icon=preferences-desktop
+Terminal=false
+Categories=Qt;KDE;System;Settings;
