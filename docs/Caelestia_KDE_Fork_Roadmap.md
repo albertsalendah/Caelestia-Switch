@@ -18,13 +18,14 @@ The plasmashell-masking step is part of the app (architecture doc D1), not of an
 
 ## App track
 
-### Phase A0 — Risk checks on the test laptop
+### Phase A0 — Risk checks on the test laptop (done 2026-09-30; one item deferred)
 
-Four things the design assumes but nobody has verified. Test them before building on them:
-1. **Survive the switch:** launch a test process from Caelestia's launcher, stop `caelestia-shell.service`, and see whether the process dies; check whether running it in its own systemd scope avoids that.
-2. **Config rewrite on exit:** edit the plasmashell applets config (and a `kwinrc` key) while the owning process runs, then stop/log out, and see whether it is overwritten; repeat after stopping plasmashell first.
-3. **`disable --now` on `caelestia-shell.service`:** stays off across a logout/login and does not come back on its own.
-4. **Logout call:** `qdbus6 org.kde.Shutdown /Shutdown org.kde.Shutdown.logout` from a process outside both shells' cgroups.
+1. **Survive the switch: PASS from Caelestia's launcher.** KCalc launched from Caelestia's launcher ran in `app.slice/app-KDE-kcalc-….scope`, not inside `caelestia-shell.service` (`session.slice`, `KillMode=control-group`). Repeat from stock Plasma's launcher in Phase A3.
+2. **Config rewrite on exit: folded into Phases A2/A3.** The switch order stops the outgoing plasmashell before restoring its config, and the app verifies the restored keys after the next login; a contrived separate test would show little.
+3. **`disable --now` on `caelestia-shell.service`: PASS.** It removed the `graphical-session.target.wants` link; the service stayed disabled and inactive across a logout and a fresh login; `enable --now` restored it live.
+4. **Logout call: PASS.** `qdbus6 org.kde.Shutdown /Shutdown org.kde.Shutdown.logout` run from an SSH shell logged the session out to the login screen with no confirmation dialog.
+
+Also observed: with Caelestia disabled and plasmashell headless, the desktop shows only the wallpaper and KDE's own right-click menu (plasmashell's desktop layer). The panels return only when the stock config is restored.
 
 **Done when:** each assumption is confirmed or the design is amended with what actually happens.
 

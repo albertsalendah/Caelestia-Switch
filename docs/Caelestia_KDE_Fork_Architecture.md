@@ -45,7 +45,7 @@ The app does not depend on it, for two reasons: it only covers the stock side, a
 
 The app is its own binary with its own `.desktop` entry, reachable from both Caelestia's launcher and stock KDE. It cannot live inside `caelestia-shell.service`: switching off stops the whole Caelestia process tree.
 
-**Constraint (unverified, test early):** if the app is launched from Caelestia's launcher it may sit inside `caelestia-shell.service`'s cgroup, and stopping that service could kill the app mid-switch. The app must detach into its own systemd scope before stopping anything.
+**Checked 2026-09-30 (Phase A0):** KCalc launched from Caelestia's launcher ran in its own scope (`app.slice/app-KDE-kcalc-….scope`), not inside `caelestia-shell.service` (which lives in `session.slice` with `KillMode=control-group`), so stopping the service does not kill apps started from the launcher. Not yet checked from stock Plasma's launcher; do that in Phase A3 when the app runs in stock mode. Proposed safety net: at startup the app reads its own cgroup and, if it sits inside a shell's service, re-executes itself in its own scope (`systemd-run --user --scope`).
 
 ### D6 — Privilege separation
 
@@ -98,14 +98,14 @@ The app keeps timestamped backups for both the stock-Plasma side and the Caelest
 - **To Caelestia, checkbox checked:** start Caelestia, pre-flight then stop and mask plasmashell.
 - **To Caelestia, checkbox unchecked:** start Caelestia and leave plasmashell running headless (upstream's default state); if plasmashell is masked or not running, unmask and start it.
 - **The checkbox therefore only has an effect when switching to Caelestia.**
-- **Caelestia is disabled, not masked** (`disable --now`). `caelestia-shell.service` is a regular file in `~/.config/systemd/user` written by `10-autostart.sh`, and masking would collide with that file. plasmashell's unit ships with the system, so masking works there (proven in testing). The `disable` behavior for Caelestia is not yet tested.
+- **Caelestia is disabled, not masked** (`disable --now`). `caelestia-shell.service` is a regular file in `~/.config/systemd/user` written by `10-autostart.sh`, and masking would collide with that file. plasmashell's unit ships with the system, so masking works there (proven in testing). Checked 2026-09-30 (Phase A0): `systemctl --user disable --now caelestia-shell.service` removed the `graphical-session.target.wants` link, and the service stayed disabled and inactive across a logout and a fresh login; `enable --now` brought it back live, without a logout. Note: with Caelestia disabled and plasmashell still running headless, the desktop shows only the wallpaper and KDE's own right-click menu (plasmashell's desktop layer); the panels return only when the stock backup (panel config and `ShellPackage`) is restored.
 - Stop Caelestia before resetting `ShellPackage`, because Caelestia's startup wrapper self-heals it back to `caelestia.desktop`.
 
 ### D13 — A logout is always required; graceful, with a warning (NEW, confirmed 2026-09-30)
 
-Apply all changes first, then log out with `qdbus6 org.kde.Shutdown /Shutdown org.kde.Shutdown.logout` (the call Caelestia's own Logout button uses; worked in Test 16.5). Do not use the ksmserver call (failed on Plasma 6.7.5) or `loginctl terminate-session` (leaves the systemd user units running, Test 16.5). The app shows a "save your work" warning and does not force-kill applications; the normal logout lets apps ask about unsaved work.
+Apply all changes first, then log out with `qdbus6 org.kde.Shutdown /Shutdown org.kde.Shutdown.logout` (the call Caelestia's own Logout button uses; worked in Test 16.5; checked again 2026-09-30 from an SSH shell, outside both shells' cgroups, where it logged the session out to the login screen with no confirmation dialog). Do not use the ksmserver call (failed on Plasma 6.7.5) or `loginctl terminate-session` (leaves the systemd user units running, Test 16.5). The app shows a "save your work" warning and does not force-kill applications; the normal logout lets apps ask about unsaved work.
 
-**Unverified, test early:** plasmashell may rewrite its config (for example the applets config, and possibly `kwinrc` for KWin) when it exits, which would clobber a config restore done while it was still running. The config swap must therefore happen after the outgoing shell has stopped and be verified after the next login.
+**Unverified; checked in the Phase A2/A3 backup-restore round trips rather than a separate test (decided 2026-09-30):** plasmashell may rewrite its config (for example the applets config, and possibly `kwinrc` for KWin) when it exits, which would clobber a config restore done while it was still running. The config swap must therefore happen after the outgoing shell has stopped and be verified after the next login.
 
 ### D14 — Helper units follow the switch only when safe (NEW, confirmed 2026-09-30)
 
@@ -134,7 +134,7 @@ The install records only `.current_commit` and `.update_branch` under `~/.config
 
 ## Open decisions
 
-- Whether the unverified constraints above hold: survive-the-switch (D5), config-rewrite-on-exit (D13), `disable --now` on the Caelestia unit (D12).
+- Still unverified: config rewrite on exit (D13), checked during Phases A2/A3; and the survive-the-switch check from stock Plasma's launcher (D5), during Phase A3.
 
 ## Non-goals (for now)
 

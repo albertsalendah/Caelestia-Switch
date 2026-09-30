@@ -16,7 +16,7 @@ One app, reachable from both Caelestia and stock Plasma, that switches between `
 
 | Reading | Example values |
 |---|---|
-| Which shell is drawing the desktop | Caelestia / Plasma (derived from `ShellPackage` plus process states; exact rule to be defined) |
+| Bar/panel provider | Caelestia / Plasma / none (derived from `ShellPackage`, panel config and process states; exact rule to be defined) |
 | plasmashell process | running / stopped |
 | plasmashell unit | masked / not masked |
 | `caelestia-shell.service` | active / inactive, enabled / disabled |
@@ -25,7 +25,7 @@ One app, reachable from both Caelestia and stock Plasma, that switches between `
 | Version | e.g. v2.5.0 / unknown (see Source and version detection) |
 | Backups present | stock side: yes/no; Caelestia side: yes/no |
 
-An unmodified upstream install reads as: Caelestia drawing the desktop, plasmashell running headless and not masked. That is a **valid** state (Condition A in the test log), not an error.
+An unmodified upstream install reads as: Caelestia providing the bar and panels, plasmashell running headless and not masked. That is a **valid** state (Condition A in the test log), not an error. A headless plasmashell still owns the desktop layer (wallpaper and the KDE right-click menu) whenever Caelestia is not running (checked 2026-09-30), so the desktop is never blank of a shell even without Caelestia; only the panels are missing until the stock config is restored.
 
 **Inconsistent** now only covers combinations that are actually wrong: plasmashell masked but still running; both shells drawing panels; neither shell running; or the state file says a switch was in progress. The UI points the user at `repair` (below) instead of picking a side.
 
@@ -52,7 +52,7 @@ Shows: plasmashell status, the source of the installed Caelestia, and its versio
 So the checkbox only appears/has an effect when switching to Caelestia.
 
 Additional rules:
-- **Caelestia is disabled, not masked** (`systemctl --user disable --now`). `caelestia-shell.service` is a regular file in `~/.config/systemd/user`, and masking would collide with it. *Not yet tested.*
+- **Caelestia is disabled, not masked** (`systemctl --user disable --now`). `caelestia-shell.service` is a regular file in `~/.config/systemd/user`, and masking would collide with it. *Checked 2026-09-30: `disable --now` holds across a logout and login, and `enable --now` restores it live.*
 - **Stop Caelestia before resetting `ShellPackage`.** Caelestia's startup wrapper (`~/.local/bin/caelestia-autostart.sh`) rewrites it to `caelestia.desktop`.
 - **Pre-flight before masking plasmashell**, live, every time: `RequiredBy`, `WantedBy` and `BoundBy` of `plasma-plasmashell.service` must be empty. If not, refuse to mask.
 - **Helper units** (`cliphist.service`, the update-checker timer/service): stop them with Caelestia only if a live check shows nothing depends on them; otherwise leave them running. The KWin workspace-tracker effect is not a process and is left alone.
@@ -61,13 +61,13 @@ Additional rules:
 
 1. Show the warning dialog: applications will be closed by the logout, save your work. Do not force-kill applications.
 2. Write the state file: `transitioning`, step 0.
-3. Detach the app into its own systemd scope (so stopping a shell cannot kill it). *Unverified, test early.*
+3. Check the app's own cgroup; if it sits inside a shell's service, re-execute it in its own systemd scope. (It does not when launched from Caelestia's launcher, checked 2026-09-30; not yet checked from stock Plasma's launcher.)
 4. Snapshot the mode being left (automatic backup).
 5. Stop the outgoing shell and, where safe, its helper units.
-6. Restore the selected backup (config files) — after the outgoing shell has stopped, because plasmashell may rewrite its config on exit. *Unverified, test early.*
+6. Restore the selected backup (config files) — after the outgoing shell has stopped, because plasmashell may rewrite its config on exit. *Unverified; checked in the Phase A2/A3 round trips.*
 7. Apply unit changes (mask/unmask, enable/disable, start/stop) per the rules above.
 8. Verify internally with the same readings; only continue if they match the expected state.
-9. State file: `pending-logout`. Log out with `qdbus6 org.kde.Shutdown /Shutdown org.kde.Shutdown.logout`.
+9. State file: `pending-logout`. Log out with `qdbus6 org.kde.Shutdown /Shutdown org.kde.Shutdown.logout` (checked 2026-09-30: works from a shell outside both shells' cgroups, with no confirmation dialog).
 10. After the next login, `status` confirms the expected final state and the state file is closed out.
 
 The state file is updated after every step, not just at the end.
@@ -116,9 +116,8 @@ All of this is local; no network calls on the startup path.
 
 ## Open items
 
-1. **Survive the switch:** whether the app dies when launched from Caelestia's launcher and it stops the service (D5). Test early (roadmap Phase A0).
-2. **Config rewrite on shell exit:** whether restored config (the applets config, and possibly `kwinrc`) gets clobbered (D13). Test early.
-3. **`disable --now` on `caelestia-shell.service`** behaves as expected across a logout/login (D12).
+1. **Survive the switch, from stock Plasma's launcher.** Checked from Caelestia's launcher (fine); repeat from stock Plasma's launcher in roadmap Phase A3.
+2. **Config rewrite on shell exit:** whether restored config (the applets config, and possibly `kwinrc`) gets clobbered (D13). Checked in the Phase A2/A3 round trips.
 
 ## Out of scope for v1
 
