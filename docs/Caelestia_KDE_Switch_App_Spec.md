@@ -1,6 +1,6 @@
 # Caelestia KDE Switch App — Spec
 
-*Revised 2026-09-30 (v2). Supersedes the earlier terminal-first spec. Working name: `caelestia-switch` (provisional).*
+*Revised 2026-10-01 (v2.1: status implemented, version detection amended). Supersedes the earlier terminal-first spec. Working name: `caelestia-switch` (provisional).*
 
 ## Purpose
 
@@ -16,7 +16,7 @@ One app, reachable from both Caelestia and stock Plasma, that switches between `
 
 | Reading | Example values |
 |---|---|
-| Bar/panel provider | Caelestia / Plasma / none (derived from `ShellPackage`, panel config and process states; exact rule to be defined) |
+| Bar/panel provider | Caelestia / Plasma / none, or "both" (Inconsistent). Rule (defined in Phase A1, architecture D17): Caelestia if its service is active or a quickshell process runs; Plasma if plasmashell runs with the stock `ShellPackage` (unset or `org.kde.plasma.desktop`); otherwise none. Panel config is not read. |
 | plasmashell process | running / stopped |
 | plasmashell unit | masked / not masked |
 | `caelestia-shell.service` | active / inactive, enabled / disabled |
@@ -25,9 +25,9 @@ One app, reachable from both Caelestia and stock Plasma, that switches between `
 | Version | e.g. v2.5.0 / unknown (see Source and version detection) |
 | Backups present | stock side: yes/no; Caelestia side: yes/no |
 
-An unmodified upstream install reads as: Caelestia providing the bar and panels, plasmashell running headless and not masked. That is a **valid** state (Condition A in the test log), not an error. A headless plasmashell still owns the desktop layer (wallpaper and the KDE right-click menu) whenever Caelestia is not running (checked 2026-09-30), so the desktop is never blank of a shell even without Caelestia; only the panels are missing until the stock config is restored.
+An unmodified upstream install reads as: Caelestia providing the bar and panels, plasmashell running headless and not masked. That is a **valid** state (Condition A in the test log), not an error. A headless plasmashell still owns the desktop layer (wallpaper and the KDE right-click menu) whenever Caelestia is not running (checked 2026-09-30), so the desktop is never blank of a shell even without Caelestia (it shows the wallpaper, any desktop icons and KDE's right-click menu); only the panels are missing until the stock config is restored. That state reads as provider "none" and is valid.
 
-**Inconsistent** now only covers combinations that are actually wrong: plasmashell masked but still running; both shells drawing panels; neither shell running; or the state file says a switch was in progress. The UI points the user at `repair` (below) instead of picking a side.
+**Inconsistent** now only covers combinations that are actually wrong: plasmashell masked but still running; both shells drawing panels; neither shell running; the state file says a switch was in progress; or systemd cannot be queried (reported as such, not guessed). The UI points the user at `repair` (below) instead of picking a side.
 
 ### Screen A — Backup needed
 
@@ -88,7 +88,7 @@ The state file is updated after every step, not just at the end.
 
 The GUI is a thin layer over a CLI core, so every action is scriptable and testable over SSH. *(Toolkit decided: C++ with Qt6 Widgets and KF6; architecture doc D16.)*
 
-- `status` — unprivileged, read-only; prints the readings above.
+- `status` — unprivileged, read-only; prints the readings above (**implemented in Phase A1, 2026-10-01**). `--json` prints them as JSON. Exit code 0 even when Inconsistent, 3 if systemd cannot be queried. The "Backups present" reading is added in Phase A2.
 - `backup` / `restore` — unprivileged; create or apply a snapshot.
 - `on` / `off` — unprivileged; the switch rules above (`on` takes an option for the mask/disable-plasmashell behavior). Idempotent: switching to the mode you are already in is a no-op with exit 0.
 - `repair` — unprivileged; only reachable when `status` reports Inconsistent. Reads the state file to find which switch was in progress and resumes from the last completed step. If the state file is missing or unreadable, falls back to restoring stock Plasma, the state with no fork-specific assumptions.
@@ -103,16 +103,19 @@ Path: `~/.config/caelestia-switch/state` (exact location not critical, but outsi
 
 One entry visible in both Caelestia's launcher and stock KDE's launcher/KRunner (a normal installed `.desktop` file; confirm during testing rather than assume). It opens the GUI. `install`/`update`/`uninstall` can also be reached from the GUI once implemented.
 
-## Source and version detection (decided 2026-09-30; architecture doc D15)
+## Source and version detection (decided 2026-09-30; version source amended 2026-10-01; architecture doc D15)
 
-The install records only `.current_commit` and `.update_branch`; the version lives in `.github/version.env` inside the checkout; no source is recorded. Tried in order:
+The install records `.current_commit` and `.update_branch`, and also `.current_version` (a copy of the checkout's `.github/version.env`), all under `~/.config/quickshell/caelestia/`; no source repo is recorded. Source and version are resolved separately, each in order.
 
-1. **App-written marker** (source, version, commit, checkout path), written whenever the app installs or updates. Ignored if its commit differs from the current `.current_commit`.
-2. **Checkout discovery:** a checkout (`~/caelestia-kde` or `CAELESTIA_DIR`) whose `HEAD` equals `.current_commit`. Source = its `origin` URL; version = `.github/version.env`.
+**Source:**
+1. **App-written marker** (source, version, commit, checkout path), written whenever the app installs or updates. Read from `~/.config/caelestia-switch/install.json`. Ignored if its commit differs from the current `.current_commit`.
+2. **Checkout discovery:** a checkout (`$CAELESTIA_DIR`, then `~/caelestia-kde`) whose `HEAD` equals `.current_commit`. Source = its `origin` URL (`github.com/ladybug-me/caelestia-kde` reads as "ladybug-me", `github.com/albertsalendah/caelestia-kde` as "fork", anything else "unknown").
 3. **Later:** the fork's installer writes its own marker.
-4. **Otherwise "unknown"** for source and/or version. No first-run question.
+4. **Otherwise "unknown".** No first-run question.
 
-All of this is local; no network calls on the startup path.
+**Version:** the marker, else `.current_version`, else the discovered checkout's `.github/version.env`, else "unknown". A moved checkout therefore leaves the version known and the source "unknown".
+
+All of this is local; no network calls on the startup path. The `status` output also shows where each answer came from (marker / checkout / `.current_version`).
 
 ## Open items
 

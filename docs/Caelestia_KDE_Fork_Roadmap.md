@@ -1,6 +1,6 @@
 # Caelestia KDE Switch App & Fork — Roadmap
 
-*Revised 2026-09-30. The plan is now app-first; the fork is a separate, later track.*
+*Revised 2026-10-01 (A1 done). The plan is now app-first; the fork is a separate, later track.*
 
 ## Goal
 
@@ -14,6 +14,7 @@ The plasmashell-masking step is part of the app (architecture doc D1), not of an
 - Full source audit of `caelestia-kde` at commit `be4188f` (2026-09-23, = upstream tag `v2.5.0`) is complete.
 - All 17 planned test items (Test 1 through Test 16.6) passed on the test laptop (ASUS X441BA, CachyOS, Plasma 6.7.5, 4 GiB RAM), including two independent reboots with `plasma-plasmashell.service` masked before login.
 - **2026-09-30:** clean uninstall (with the installer's konsave backup restore) returned stock Plasma including `Meta+W`; a clean reinstall from the checkout at `be4188f` passed a baseline check (Condition A: Caelestia active, plasmashell headless and not masked, `ShellPackage=caelestia.desktop`). The test laptop is currently in that state.
+- **2026-10-01:** Phase A1 is done: `status` works and passed its live test matrix on the test laptop (see Phase A1).
 - The fork is an unmodified copy of `v2.5.0` (`main` == `be4188f`). Upstream has since released `v2.5.1` (149 commits ahead); moving to it is a separate step (architecture doc D9).
 
 ## App track
@@ -29,9 +30,11 @@ Also observed: with Caelestia disabled and plasmashell headless, the desktop sho
 
 **Done when:** each assumption is confirmed or the design is amended with what actually happens.
 
-### Phase A1 — Status detection (`status`)
+### Phase A1 — Status detection (`status`) — done 2026-10-01
 
 The project skeleton is set up in its own repository (`caelestia-switch`: CMake, core library, CLI and GUI stubs; the GUI is filled in during Phase A4). Implement the readings from the spec. Read-only.
+
+**Result (2026-10-01):** implemented as `caelestia-switch status [--json]` (architecture D17) with 21 QtTest cases, built on the MSI and ASUS. Live matrix on the ASUS, all as expected: Condition A (provider Caelestia, ladybug-me, v2.5.0, ok); plasmashell masked but running (Inconsistent); masked and stopped (ok); Caelestia disabled and stopped with plasmashell headless (provider none, ok); checkout moved away (source "unknown", version still v2.5.0). Finding: the installer also writes `.current_version`, so the version no longer depends on the checkout (D15 amended). The baseline was restored afterwards.
 
 **Done when:** `status` reports correctly on the current Condition A install (including source and version, for example ladybug-me and v2.5.0), after manually masking plasmashell, after manually disabling Caelestia (stock), and flags a deliberately created conflict (for example plasmashell masked but running) as Inconsistent. Source/version detection follows the spec (marker, checkout discovery, else "unknown"); check that moving the checkout away yields "unknown" rather than a wrong answer.
 

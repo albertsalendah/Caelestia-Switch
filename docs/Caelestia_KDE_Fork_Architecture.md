@@ -1,6 +1,6 @@
 # Caelestia KDE Switch App & Fork — Architecture & Design Decisions
 
-*Revised 2026-09-30. Supersedes the earlier "fork-first" version of this document.*
+*Revised 2026-10-01 (D15 amended, D16 build note, D17 added). Supersedes the earlier "fork-first" version of this document.*
 
 ## What this project is now
 
@@ -111,14 +111,32 @@ Apply all changes first, then log out with `qdbus6 org.kde.Shutdown /Shutdown or
 
 Caelestia-related units besides `caelestia-shell.service` include `cliphist.service` (clipboard-history watchers) and the update-checker timer/service. When switching to plasmashell, stop them only if a live check shows nothing depends on them (same pattern as the plasmashell pre-flight); otherwise leave them running. Start them again when switching to Caelestia. The KWin workspace-tracker effect is not a process and stays loaded in KWin.
 
-### D15 — Source and version detection (NEW, decided 2026-09-30)
+### D15 — Source and version detection (NEW, decided 2026-09-30; version source amended 2026-10-01)
 
-The install records only `.current_commit` and `.update_branch` under `~/.config/quickshell/caelestia/`; the version number lives in `.github/version.env` inside the checkout; no source repo is recorded. A commit hash alone cannot tell fork from upstream while their history is shared. The app therefore tries, in order:
+The install records `.current_commit` and `.update_branch` under `~/.config/quickshell/caelestia/`, and also `.current_version`, a copy of the checkout's `.github/version.env` (written by `scripts/lib/update-state.sh`; confirmed on the test laptop 2026-10-01). The earlier statement that only the commit and branch were recorded was wrong. No source repo is recorded. A commit hash alone cannot tell fork from upstream while their history is shared. The app therefore resolves the two readings separately, each in order:
 
+**Source**
 1. **App-written marker** (source, version, commit, checkout path), written whenever the app installs or updates. Ignored if its recorded commit differs from the current `.current_commit` (the install changed outside the app).
-2. **Checkout discovery:** look for a checkout (`~/caelestia-kde` or `CAELESTIA_DIR`) whose `HEAD` equals `.current_commit`. If found, the source is its `origin` URL (which is also where its updates come from) and the version is `.github/version.env`. This works for an unmodified upstream install with no changes to it.
+2. **Checkout discovery:** a checkout (`$CAELESTIA_DIR`, then `~/caelestia-kde`) whose `HEAD` equals `.current_commit`. The source is its `origin` URL (also where its updates come from). Works for an unmodified upstream install with no changes to it.
 3. **Later:** the fork's installer writes its own marker (fork track, F0).
-4. **Otherwise show "unknown"** for source and/or version. No first-run question to the user.
+4. **Otherwise "unknown".** No first-run question to the user.
+
+**Version**
+1. The marker, if valid (as above).
+2. `~/.config/quickshell/caelestia/.current_version`.
+3. The discovered checkout's `.github/version.env`.
+4. Otherwise "unknown".
+
+So a moved or deleted checkout makes the source read "unknown" but the version stays known. Implemented and checked in Phase A1 (2026-10-01).
+
+### D17 — Status implementation choices (NEW, Phase A1, 2026-10-01)
+
+- **Unit state over D-Bus, not `systemctl`:** the user systemd manager is queried on the user bus with `LoadUnit` (so masked and not-installed units still answer) and `Properties.GetAll`; 3 s call timeout. If `DBUS_SESSION_BUS_ADDRESS` is unset (common over SSH), the standard `/run/user/<uid>/bus` socket is used and Qt never tries to autolaunch a bus.
+- **Process scan:** `/proc/<pid>/status` (name, uid, state), own user only, zombies ignored, for `plasmashell` and `quickshell`.
+- **Bar/panel provider rule:** Caelestia if `caelestia-shell.service` is active or a quickshell process exists; Plasma if plasmashell runs and `ShellPackage` is unset or `org.kde.plasma.desktop`; both is Inconsistent; otherwise none. Panel config (`appletsrc`) is not read: a headless plasmashell with `ShellPackage=caelestia.desktop` and Caelestia off reads as "none", which is valid (the panels-missing state).
+- **Inconsistent** = plasmashell masked but running; Caelestia and stock panels both active; neither shell running; the state file says `transitioning` or `pending-logout`; systemd cannot be queried (reported as such, not guessed).
+- **`status`** exits 0 even when Inconsistent (a reading, not a failure) and 3 if systemd cannot be queried; `--json` prints the same readings as JSON. Because the service turns `active` before `quickshell` has started, a reading taken right after `start` can show the process as stopped for a moment; the provider rule uses the service state, so it is unaffected.
+- **State file:** read leniently for now (first word, optional `mode=` prefix); the real format is fixed in Phase A3.
 
 ### D16 — Toolkit: C++ with Qt6 Widgets and KF6 (NEW, decided 2026-09-30)
 
@@ -128,7 +146,7 @@ The install records only `.current_commit` and `.update_branch` under `~/.config
 
 **Rejected:** Python with PySide6 (large extra dependency, slower start and more RAM on the A4, no `KConfig` group support, so key-by-key `kwriteconfig6` calls or hand-parsing KDE's INI quirks); Qt Quick/Kirigami (heavier on the Radeon R3, more machinery for three simple screens; can be revisited later since the core is separate); Flutter (GTK-based on Linux desktop, ignores KDE theming, heavy, no `KConfig`).
 
-**Build notes:** build on the MSI (same CachyOS; check the Qt and KF6 versions match the ASUS) and copy the binary to the ASUS. Do not build with `-march=native`. Building on the ASUS itself is slow (4 GiB, dual core).
+**Build notes (amended 2026-10-01):** build on the ASUS itself (clone, `git pull --ff-only`, `cmake --build build -j2`; about 10 s for the skeleton, longer with the A1 code but fine). The MSI build is a compile check only; both have Qt 6.11.2 and KF6 6.30.0. Do not build with `-march=native`. Unit tests run with `ctest --test-dir build --output-on-failure` (QtTest).
 
 **Repository (decided 2026-09-30):** the app lives in its own repository (working name `caelestia-switch`), separate from the caelestia-kde fork, because it must work with upstream and the fork alike (D10). The initial project skeleton (CMake, core library, CLI and GUI stubs) builds with Qt6.
 
