@@ -48,6 +48,8 @@ struct Readings {
     QString shellPackage;        // ShellPackage from plasmashellrc; empty = unset (stock default)
 
     QString switchStateMode;     // mode from the app's state file; empty = no state file
+    int stockBackups = 0;        // number of readable backups per side (Phase A2)
+    int caelestiaBackups = 0;
     InstallInfo install;
 
     Provider provider = Provider::None;

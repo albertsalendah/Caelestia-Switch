@@ -1,5 +1,6 @@
 #include "readings.h"
 
+#include "backup.h"
 #include "consistency.h"
 #include "fsutil.h"
 #include "install.h"
@@ -129,6 +130,9 @@ Readings gatherReadings()
     r.shellPackage = readShellPackage();
     r.switchStateMode = parseStateMode(readTextFile(appConfigDir() + QStringLiteral("/state")));
     r.install = detectInstall();
+    const BackupPaths backupPaths = BackupPaths::defaults();
+    r.stockBackups = listBackups(Side::Stock, backupPaths).size();
+    r.caelestiaBackups = listBackups(Side::Caelestia, backupPaths).size();
 
     r.provider = computeProvider(r);
     r.inconsistentReasons = findInconsistencies(r);
@@ -154,6 +158,7 @@ QString toText(const Readings &r)
     if (!r.install.origin.isEmpty()) {
         out += line(QStringLiteral("Origin"), r.install.origin);
     }
+    out += line(QStringLiteral("Backups"), QStringLiteral("stock: %1, Caelestia: %2").arg(r.stockBackups).arg(r.caelestiaBackups));
     out += line(QStringLiteral("Switch state file"), r.switchStateMode.isEmpty() ? QStringLiteral("none") : r.switchStateMode);
     out += line(QStringLiteral("Consistency"), r.inconsistent() ? QStringLiteral("INCONSISTENT") : QStringLiteral("ok"));
     for (const QString &reason : r.inconsistentReasons) {
@@ -185,6 +190,7 @@ QJsonObject toJson(const Readings &r)
                                                    {QStringLiteral("quickshellRunning"), r.quickshellRunning},
                                                    {QStringLiteral("install"), install}}},
         {QStringLiteral("switchStateMode"), r.switchStateMode},
+        {QStringLiteral("backups"), QJsonObject{{QStringLiteral("stock"), r.stockBackups}, {QStringLiteral("caelestia"), r.caelestiaBackups}}},
         {QStringLiteral("consistent"), !r.inconsistent()},
         {QStringLiteral("inconsistentReasons"), QJsonArray::fromStringList(r.inconsistentReasons)},
     };
