@@ -15,6 +15,7 @@ The plasmashell-masking step is part of the app (architecture doc D1), not of an
 - All 17 planned test items (Test 1 through Test 16.6) passed on the test laptop (ASUS X441BA, CachyOS, Plasma 6.7.5, 4 GiB RAM), including two independent reboots with `plasma-plasmashell.service` masked before login.
 - **2026-09-30:** clean uninstall (with the installer's konsave backup restore) returned stock Plasma including `Meta+W`; a clean reinstall from the checkout at `be4188f` passed a baseline check (Condition A: Caelestia active, plasmashell headless and not masked, `ShellPackage=caelestia.desktop`). The test laptop is currently in that state.
 - **2026-10-01:** Phase A1 is done: `status` works and passed its live test matrix on the test laptop (see Phase A1).
+- **2026-10-01:** the clean-stop test (D4) showed a plain `systemctl stop` leaves Caelestia's stolen shortcuts and screen corner in place, while a graceful `quickshell kill` releases them (architecture D18). Backup scope for A2 was narrowed accordingly (D11).
 - The fork is an unmodified copy of `v2.5.0` (`main` == `be4188f`). Upstream has since released `v2.5.1` (149 commits ahead); moving to it is a separate step (architecture doc D9).
 
 ## App track
@@ -40,13 +41,13 @@ The project skeleton is set up in its own repository (`caelestia-switch`: CMake,
 
 ### Phase A2 — Backup and restore
 
-Timestamped two-sided snapshots, the dropdown listing, and the automatic snapshot-on-leave, with the contents decided in the architecture doc (D11): shell-owned files whole, shared files and look-and-feel keys at group level, plus a manifest per backup.
+Timestamped two-sided snapshots, the dropdown listing, and the automatic snapshot-on-leave, with the contents decided in the architecture doc (D11, narrowed 2026-10-01): shell-owned files whole; shared files at key level with "absent means delete" on restore; screen edges, stolen shortcuts and `kglobalshortcutsrc` are not backed up because Caelestia releases them itself when quit gracefully (D18); a manifest per backup.
 
-**Done when:** a backup, change, restore round trip on the test laptop brings back stock panels, wallpaper, `Meta+W`, the Overview corner, and Caelestia's own settings, verified against the Test 14 symptoms. Also verify the clean-stop screen-edge case that Test 13 did not cover (D4).
+**Done when:** a backup, change, restore round trip on the test laptop brings back stock panels, wallpaper, `Meta+W`, the Overview corner, and Caelestia's own settings, verified against the Test 14 symptoms. The clean-stop edge/shortcut case (D4) was tested on 2026-10-01 and is resolved by D18; its end-to-end check (off, logout, login) moves to Phase A3.
 
 ### Phase A3 — Switch core (`on` / `off`)
 
-The switch rules, helper-unit handling, state file, `repair`, and the logout step.
+The switch rules, graceful Caelestia quit (D18), helper-unit handling, state file, `repair`, and the logout step.
 
 **Done when:** off, on, off, on (with the checkbox both checked and unchecked, and across real logouts) leaves the system in the expected state every time: no drift, no leftover broken shortcuts, no orphaned processes, no two UIs at once. Interrupting a switch mid-way (killing the app) is recoverable via `repair`.
 

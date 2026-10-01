@@ -1,6 +1,6 @@
 # Caelestia KDE Switch App & Fork — Architecture & Design Decisions
 
-*Revised 2026-10-01 (D15 amended, D16 build note, D17 added). Supersedes the earlier "fork-first" version of this document.*
+*Revised 2026-10-01 (D4 resolved, D11 narrowed, D15 amended, D16 build note, D17 and D18 added). Supersedes the earlier "fork-first" version of this document.*
 
 ## What this project is now
 
@@ -33,13 +33,13 @@ Upstream's `00-backup-themes.sh` still runs as an unconditional install step and
 
 The app does not depend on it, for two reasons: it only covers the stock side, and after the 2026-09-30 clean reinstall only the newest backup remained in `backups/` (whether the uninstall removed the older ones or they were deleted is unconfirmed, so the original pre-Caelestia snapshot may be gone). The app takes its own snapshots (D11).
 
-### D4 — Screen-edge restore: re-scoped, handled app-side
+### D4 — Screen-edge and shortcut restore: RESOLVED 2026-10-01 (see D18)
 
 **Original claim:** `screenedges.cpp` writes `~/.config/caelestia/stolen-screen-edges.json` and nothing reads it back; `uninstall.sh` has no matching lines.
 
-**Re-scoped 2026-09-30:** `screenedges.cpp` does restore on its own — `restoreAll()` on exit and `recoverFromCrash()` on start (Test 13 logged "Crash recovery: restoring screen corner 7"). `uninstall.sh` itself still has no logic that reads the JSON (per the earlier grep). After the 2026-09-30 clean uninstall with the konsave backup restore selected, `Meta+W` and the Overview corner worked again, so the Test 14 breakage did not reproduce on that path. Which mechanism did the restore (the konsave backup or the shell's own exit handler) is unknown. **Unverified:** a clean stop of `caelestia-shell.service` without a konsave restore, which is what the app's switch does; Test 13 only covered `kill -9`.
+**Re-scoped 2026-09-30:** `screenedges.cpp` restores on its own (`restoreAll()` on exit, `recoverFromCrash()` on start; Test 13 logged "Crash recovery: restoring screen corner 7"). The same holds for shortcuts (`globalshortcut.cpp`, `stolen-shortcuts.json`). The open question was a clean stop, which is what the app's switch does.
 
-**Handling:** the app's backup/restore (D11) includes the KWin electric-border config, so no upstream code change is needed. Reproduce the clean-stop case first; only add dedicated edge handling if it actually breaks.
+**Result (2026-10-01, ASUS):** a plain `systemctl --user stop caelestia-shell.service` does **not** release anything (both `stolen-*.json` files stay, the stolen kwin shortcuts stay `none`, `BorderActivate=9` stays). That is the Test 14 breakage. A graceful quit of quickshell does release everything. So no backup of this runtime state is needed: the switch must quit Caelestia gracefully (D18), and the backups (D11) leave edges and shortcuts out.
 
 ### D5 — Separate, standalone app, independent of both shells
 
@@ -84,13 +84,17 @@ The app keeps timestamped backups for both the stock-Plasma side and the Caelest
 
 **Why Caelestia needs a backup at all:** switching off leaves Caelestia installed. What differs between modes is the KDE-side configuration the installer changed (panel config, `ShellPackage`, KWin edges, shortcuts, lock-screen config), so "restore Caelestia without reinstalling" means restoring that configuration.
 
-**Contents (decided 2026-09-30):** so that plasmashell always returns to the way the user set it previously, backups cover both the shell-related files and the look-and-feel/behavior keys the installer changes.
+**Contents (decided 2026-09-30, narrowed 2026-10-01 after the D18 tests):** so that plasmashell always returns to the way the user set it previously, backups cover what the installer writes *persistently*. Runtime state that Caelestia claims and releases itself (screen edges, stolen shortcuts) is not backed up, because restoring a snapshot of the claimed state would make Caelestia record that value as the "original" and never release it. Whole-file where only the shell writes the file, key-level (D11 split confirmed by the user 2026-10-01) where the file is shared.
 
-- *Whole-file snapshots (shell-owned):* `plasma-org.kde.plasma.desktop-appletsrc` (panels, desktop wallpaper), `plasmashellrc` (`ShellPackage`), `kscreenlockerrc` (lock screen theme and wallpaper), and `~/.config/caelestia/`. From the Caelestia folder, exclude `stolen-screen-edges.json` (runtime state; a restored stale copy could make crash recovery restore the wrong corner) and caches. Check the folder's size before implementing.
-- *Group-level snapshots (shared files):* only the groups/keys the installer or Caelestia change, so unrelated settings in the same files are never touched. `kwinrc`: electric-border groups, `Desktops`, the `Plugins` bridge/tracker keys, the `org.kde.kdecoration2` group. `kglobalshortcutsrc`: the `kwin` group. Look-and-feel/behavior: `plasmarc` (Theme, OSD), `kdeglobals` (widgetStyle, ColorScheme, OSDEnabled), `plasmanotifyrc`, `powerdevilrc` (BrightnessControl, AC), `kmixrc` (Global ShowOSD), `ksplashrc` (KSplash Engine). The exact key lists are derived from the install scripts (`04`, `06`, `07`, `08`, `09`, `10`) when implementing; konsole profile keys are also touched by the installer and still to be checked.
-- *Not backed up:* installed content (`~/.config/quickshell/caelestia/` including `.current_commit`, the lock screen shell package under `~/.local/share/plasma/shells/`, the unit files; unit enablement is handled by the switch rules) and anything system-level such as `/etc/sddm.conf` (the unprivileged app does not touch it).
+- *Whole-file snapshots (shell-owned):* `plasma-org.kde.plasma.desktop-appletsrc` (panels, desktop wallpaper), `plasmashellrc` (`ShellPackage`), `kscreenlockerrc` (lock screen theme and wallpaper), and from `~/.config/caelestia/` only `cli.json`, `keybinds.json`, `shell.json` and `monitors` (never `stolen-screen-edges.json` or `stolen-shortcuts.json`, which are recovery files, nor caches).
+- *Key-level snapshots (shared files), with "absent in the snapshot means delete" on restore:* only the groups/keys the installer changes, so unrelated settings are never touched. Found by diffing a stock reference (the 2026-09-30 konsave archive) against the live Caelestia files:
+  - `kwinrc`: the `Desktops` group (`Number`, `Id_N`), the `Plugins` keys the installer sets (`kwin_workspace_trackerEnabled` and any bridge keys, exact list from the install scripts), and the `org.kde.kdecoration2` group.
+  - `kwinrulesrc`: the groups `caelestia-opacity`, `caelestia-dialogs`, `caelestia-pip` and their names in `[General] rules`/`count` (the user's own rules stay).
+  - `plasmarc` (`OSD` group, `Theme/name`), `kdeglobals` (widget style, color scheme, the generated `Colors:*` groups; exact list from the scripts), `plasmanotifyrc` (`Notifications/LoudnessChangedOSD`), `powerdevilrc` (`brightnessosd`), `kmixrc` (`ShowOSD`), `ksplashrc` (`KSplash/Engine`).
+- *Not backed up:* `kglobalshortcutsrc` (Caelestia puts back what it took when it quits gracefully), the electric-border keys (`[Effect-overview] BorderActivate`), the auto-generated `[Tiling]` groups in `kwinrc`, Konsole profiles (not part of the shell mode), installed content (`~/.config/quickshell/caelestia/` including `.current_commit`, the lock screen shell package under `~/.local/share/plasma/shells/`, the unit files; unit enablement is handled by the switch rules) and anything system-level such as `/etc/sddm.conf` (the unprivileged app does not touch it).
+- *To check in A2:* whether the installer also clears kwin `Switch to Desktop N` shortcuts (a diff after a round trip will show it); which `kdeglobals` keys really need restoring.
 - *What "return to the way I set previously" means:* switching to plasmashell restores the snapshot taken when the user last left Plasma mode, not the original pre-Caelestia state. Older snapshots stay available in the dropdown.
-- *Storage:* `~/.local/share/caelestia-switch/backups/<side>/<timestamp>/`, outside both shells' config. Each backup has a manifest recording the original path of every item, the Caelestia commit (`.current_commit`), the Plasma version and the date, so the dropdown has readable labels and the app can warn on a version mismatch.
+- *Storage:* `~/.local/share/caelestia-switch/backups/<side>/<timestamp>/`, outside both shells' config. Each backup has a manifest recording the original path of every item (and, for key-level items, which keys), the Caelestia commit (`.current_commit`), the Plasma version and the date, so the dropdown has readable labels and the app can warn on a version mismatch.
 
 ### D12 — Switch semantics (NEW, confirmed 2026-09-30)
 
@@ -128,6 +132,17 @@ The install records `.current_commit` and `.update_branch` under `~/.config/quic
 4. Otherwise "unknown".
 
 So a moved or deleted checkout makes the source read "unknown" but the version stays known. Implemented and checked in Phase A1 (2026-10-01).
+
+### D18 — Stopping Caelestia gracefully (NEW, 2026-10-01; resolves D4)
+
+Checked on the ASUS on 2026-10-01 against the 2026-09-30 stock reference:
+
+- `systemctl --user stop caelestia-shell.service` (SIGTERM; `TimeoutStopSec=5s`) does not run Caelestia's exit handler. Cleanup only runs on a clean Qt quit (`aboutToQuit` and destructors).
+- `quickshell kill -i <id>` (id from `quickshell list --all`) quits cleanly: the service goes inactive without restarting, the kwin shortcuts are restored (`Overview`=`Meta+W`, `Log Out`, `Grid View`, `Walk Through Windows` and others), `stolen-screen-edges.json` is deleted and `BorderActivate` leaves `kwinrc`. `stolen-shortcuts.json` stays, containing an empty list; the app ignores or deletes it.
+- quickshell matches instances per display. From a bare SSH shell `kill -p <shell.qml>` and `kill -i` both report "No running instances"; with `WAYLAND_DISPLAY=wayland-0` set it works. The app runs inside the session and inherits the display; tests over SSH must set it.
+- After the clean quit the corner stayed dead until `qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.reconfigureEffect overview` was run (Caelestia's exit path only reloads effects that still have an edge key in `kwinrc`, and Overview has none after the restore). The switch ends in a logout, where KWin rereads its config anyway, so this call is a safety net that the app issues after the quit.
+- **Handling:** switch-to-plasmashell quits Caelestia gracefully, waits until the unit is inactive (after a timeout, fall back to `systemctl stop`, then recovery as below), reloads the Overview effect, then `disable`. `repair` after a hard stop starts Caelestia and quits it gracefully once, which runs its own recovery (crash recovery proven in Test 13).
+- **Still to verify in Phase A3:** the full off, logout, login result (shortcuts, corner, panels).
 
 ### D17 — Status implementation choices (NEW, Phase A1, 2026-10-01)
 

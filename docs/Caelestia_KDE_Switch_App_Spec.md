@@ -53,6 +53,7 @@ So the checkbox only appears/has an effect when switching to Caelestia.
 
 Additional rules:
 - **Caelestia is disabled, not masked** (`systemctl --user disable --now`). `caelestia-shell.service` is a regular file in `~/.config/systemd/user`, and masking would collide with it. *Checked 2026-09-30: `disable --now` holds across a logout and login, and `enable --now` restores it live.*
+- **Quit Caelestia gracefully, not with a plain `systemctl stop`** (checked 2026-10-01; architecture D18): a plain stop leaves its stolen shortcuts and screen corner in place, which is the Test 14 breakage.
 - **Stop Caelestia before resetting `ShellPackage`.** Caelestia's startup wrapper (`~/.local/bin/caelestia-autostart.sh`) rewrites it to `caelestia.desktop`.
 - **Pre-flight before masking plasmashell**, live, every time: `RequiredBy`, `WantedBy` and `BoundBy` of `plasma-plasmashell.service` must be empty. If not, refuse to mask.
 - **Helper units** (`cliphist.service`, the update-checker timer/service): stop them with Caelestia only if a live check shows nothing depends on them; otherwise leave them running. The KWin workspace-tracker effect is not a process and is left alone.
@@ -63,7 +64,7 @@ Additional rules:
 2. Write the state file: `transitioning`, step 0.
 3. Check the app's own cgroup; if it sits inside a shell's service, re-execute it in its own systemd scope. (It does not when launched from Caelestia's launcher, checked 2026-09-30; not yet checked from stock Plasma's launcher.)
 4. Snapshot the mode being left (automatic backup).
-5. Stop the outgoing shell and, where safe, its helper units.
+5. Stop the outgoing shell and, where safe, its helper units. Caelestia is quit **gracefully** (`quickshell kill -i <id>`, with the session's `WAYLAND_DISPLAY` set), not with a plain `systemctl stop`, so it releases its stolen shortcuts and screen corner; then the KWin Overview effect is reloaded (architecture D18).
 6. Restore the selected backup (config files) — after the outgoing shell has stopped, because plasmashell may rewrite its config on exit. *Unverified; checked in the Phase A2/A3 round trips.*
 7. Apply unit changes (mask/unmask, enable/disable, start/stop) per the rules above.
 8. Verify internally with the same readings; only continue if they match the expected state.
@@ -78,10 +79,10 @@ The state file is updated after every step, not just at the end.
 - Snapshots are taken automatically for the mode being left; the user can also create one manually.
 - Stored outside both Caelestia's and Plasma's own config, in `~/.local/share/caelestia-switch/backups/<side>/<timestamp>/`. Each backup has a manifest: the original path of every item, the Caelestia commit (`.current_commit`), the Plasma version and the date, used for the dropdown labels and to warn on a version mismatch.
 - The installer's own konsave backup (`<checkout>/backups/<timestamp>/`, `~/.cache/caelestia-kde/backup-dir.txt`) is not relied on; after the 2026-09-30 reinstall only the newest one remained.
-- **Contents (decided 2026-09-30; architecture doc D11):** so plasmashell returns to the way the user set it previously.
-  - *Whole-file (shell-owned):* `plasma-org.kde.plasma.desktop-appletsrc`, `plasmashellrc`, `kscreenlockerrc`, `~/.config/caelestia/` (excluding `stolen-screen-edges.json` and caches).
-  - *Group-level (shared files; only the groups/keys the installer or Caelestia change):* `kwinrc` (electric-border groups, `Desktops`, `Plugins` bridge/tracker keys, `org.kde.kdecoration2`), `kglobalshortcutsrc` (`kwin` group), and the look-and-feel/behavior keys in `plasmarc`, `kdeglobals`, `plasmanotifyrc`, `powerdevilrc`, `kmixrc`, `ksplashrc`. Exact key lists come from the install scripts when implementing.
-  - *Not backed up:* installed content (`~/.config/quickshell/caelestia/`, the lock screen shell package, unit files) and system-level files such as `/etc/sddm.conf`.
+- **Contents (decided 2026-09-30, narrowed 2026-10-01; architecture doc D11):** so plasmashell returns to the way the user set it previously. Only what the installer writes persistently is backed up; runtime state Caelestia manages itself (screen edges, stolen shortcuts) is not (D18).
+  - *Whole-file (shell-owned):* `plasma-org.kde.plasma.desktop-appletsrc`, `plasmashellrc`, `kscreenlockerrc`, and from `~/.config/caelestia/` only `cli.json`, `keybinds.json`, `shell.json`, `monitors` (never the `stolen-*.json` recovery files or caches).
+  - *Key-level (shared files; restoring writes the saved value, and a key or group absent from the snapshot is deleted):* `kwinrc` (`Desktops`, the `Plugins` keys the installer sets, `org.kde.kdecoration2`), `kwinrulesrc` (the three `caelestia-*` rule groups and their entries in `[General]`; the user's own rules stay), `plasmarc` (`OSD`, `Theme/name`), `kdeglobals` (widget style, color scheme, generated `Colors:*` groups), `plasmanotifyrc`, `powerdevilrc`, `kmixrc`, `ksplashrc`. Exact key lists come from the install scripts when implementing.
+  - *Not backed up:* `kglobalshortcutsrc`, the electric-border keys, the generated `[Tiling]` groups, Konsole profiles, installed content (`~/.config/quickshell/caelestia/`, the lock screen shell package, unit files) and system-level files such as `/etc/sddm.conf`.
   - Restoring the stock side means the snapshot taken when the user last left Plasma mode; older ones are in the dropdown.
 
 ## Subcommands (CLI core)
@@ -120,7 +121,8 @@ All of this is local; no network calls on the startup path. The `status` output 
 ## Open items
 
 1. **Survive the switch, from stock Plasma's launcher.** Checked from Caelestia's launcher (fine); repeat from stock Plasma's launcher in roadmap Phase A3.
-2. **Config rewrite on shell exit:** whether restored config (the applets config, and possibly `kwinrc`) gets clobbered (D13). Checked in the Phase A2/A3 round trips.
+2. **Backup details to check in Phase A2:** whether the installer also clears kwin `Switch to Desktop N` shortcuts, and which `kdeglobals` keys really need restoring.
+3. **Config rewrite on shell exit:** whether restored config (the applets config, and possibly `kwinrc`) gets clobbered (D13). Checked in the Phase A2/A3 round trips.
 
 ## Out of scope for v1
 
