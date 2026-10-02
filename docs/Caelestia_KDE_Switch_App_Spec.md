@@ -122,7 +122,9 @@ All of this is local; no network calls on the startup path. The `status` output 
 
 1. **Survive the switch, from stock Plasma's launcher.** Checked from Caelestia's launcher (fine); repeat from stock Plasma's launcher in roadmap Phase A3.
 2. **Backup details to check in Phase A2:** whether the installer also clears kwin `Switch to Desktop N` shortcuts, and which `kdeglobals` keys really need restoring.
-3. **Config rewrite on shell exit:** whether restored config (the applets config, and possibly `kwinrc`) gets clobbered (D13). Checked in the Phase A2/A3 round trips.
+3. **Config rewrite on shell exit (restore path checked 2026-10-02: not overwritten across a logout and login; the automated switch is checked in Phase A3):** whether restored config (the applets config, and possibly `kwinrc`) gets clobbered (D13). Checked in the Phase A2/A3 round trips.
+
+4. **Lock screen in stock mode:** not yet checked whether `Meta+L` shows Plasma's own lock screen after switching to stock (`ShellPackage` unset, `kscreenlockerrc` restored) or still Caelestia's; checked in Phase A3.
 
 ## Out of scope for v1
 

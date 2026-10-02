@@ -51,6 +51,7 @@ struct Fake {
         paths.configHome = dir.path() + QStringLiteral("/.config");
         paths.dataRoot = dir.path() + QStringLiteral("/data/backups");
         paths.appConfigDir = dir.path() + QStringLiteral("/appcfg");
+        paths.lookupPlasmaVersion = false;  // would spawn plasmashell
     }
     QString cfg(const QString &rel) const { return paths.configHome + QLatin1Char('/') + rel; }
 };

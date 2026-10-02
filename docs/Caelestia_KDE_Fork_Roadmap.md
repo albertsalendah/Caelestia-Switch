@@ -39,15 +39,17 @@ The project skeleton is set up in its own repository (`caelestia-switch`: CMake,
 
 **Done when:** `status` reports correctly on the current Condition A install (including source and version, for example ladybug-me and v2.5.0), after manually masking plasmashell, after manually disabling Caelestia (stock), and flags a deliberately created conflict (for example plasmashell masked but running) as Inconsistent. Source/version detection follows the spec (marker, checkout discovery, else "unknown"); check that moving the checkout away yields "unknown" rather than a wrong answer.
 
-### Phase A2 — Backup and restore
+### Phase A2 — Backup and restore — done 2026-10-02
 
 Timestamped two-sided snapshots, the dropdown listing, and the automatic snapshot-on-leave, with the contents decided in the architecture doc (D11, narrowed 2026-10-01): shell-owned files whole; shared files at key level with "absent means delete" on restore; screen edges, stolen shortcuts and `kglobalshortcutsrc` are not backed up because Caelestia releases them itself when quit gracefully (D18); a manifest per backup.
+
+**Result (2026-10-02):** `backup`, `backups` and `restore` implemented (`src/core/backup.*`, 9 QtTest cases) and built on both laptops. Live round trip on the ASUS, done by hand in the switch order: Caelestia-side backup; stock-side backup made from the 2026-09-30 reference files; graceful quit, disable, stop plasmashell, restore stock, start plasmashell, then a real logout and login: stock panel, pre-Caelestia wallpaper, `Meta+W`, the top-left corner, 1 workspace (the stock desktop switcher gone), and kwin shortcuts all as in stock. Return trip: stock snapshot of the live state, stop plasmashell, restore the Caelestia backup, enable Caelestia, logout and login: Caelestia bar, `Meta+W` (its own Launch Browser), corner, 5 workspaces, all as before. The restored config was not overwritten on exit or login. Not yet run live: Caelestia's own settings files (unit-tested only) and the lock screen in stock mode (moved to A3).
 
 **Done when:** a backup, change, restore round trip on the test laptop brings back stock panels, wallpaper, `Meta+W`, the Overview corner, and Caelestia's own settings, verified against the Test 14 symptoms. The clean-stop edge/shortcut case (D4) was tested on 2026-10-01 and is resolved by D18; its end-to-end check (off, logout, login) moves to Phase A3.
 
 ### Phase A3 — Switch core (`on` / `off`)
 
-The switch rules, graceful Caelestia quit (D18), helper-unit handling, state file, `repair`, and the logout step.
+The switch rules, graceful Caelestia quit (D18), helper-unit handling, state file, `repair`, and the logout step. Every step's result is checked explicitly: in the manual A2 round trip a `grep -c` that found 0 matches returned exit status 1 and silently skipped the logout. Also check in A3: the lock screen in stock mode (`Meta+L`; Plasma's own or still Caelestia's, since both `ShellPackage` and `kscreenlockerrc` change), and `plasmashell` started without panels in Caelestia mode.
 
 **Done when:** off, on, off, on (with the checkbox both checked and unchecked, and across real logouts) leaves the system in the expected state every time: no drift, no leftover broken shortcuts, no orphaned processes, no two UIs at once. Interrupting a switch mid-way (killing the app) is recoverable via `repair`.
 

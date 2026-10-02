@@ -111,6 +111,8 @@ Apply all changes first, then log out with `qdbus6 org.kde.Shutdown /Shutdown or
 
 **Unverified; checked in the Phase A2/A3 backup-restore round trips rather than a separate test (decided 2026-09-30):** plasmashell may rewrite its config (for example the applets config, and possibly `kwinrc` for KWin) when it exits, which would clobber a config restore done while it was still running. The config swap must therefore happen after the outgoing shell has stopped and be verified after the next login.
 
+**Result (2026-10-02, ASUS):** the restore path held. With plasmashell stopped first, a restore of the stock snapshot (panel config, `ShellPackage` unset, `kwinrc` `Desktops`) was still in place after starting plasmashell and after a real logout and login, and the same held for the Caelestia restore on the way back. KWin picked up the restored `kwinrc` at login (5 desktops back, 1 workspace on stock). Nothing overwrote the restored config on exit. Still to confirm in the automated switch (A3): the same under `on`/`off` including the helper units.
+
 ### D14 — Helper units follow the switch only when safe (NEW, confirmed 2026-09-30)
 
 Caelestia-related units besides `caelestia-shell.service` include `cliphist.service` (clipboard-history watchers) and the update-checker timer/service. When switching to plasmashell, stop them only if a live check shows nothing depends on them (same pattern as the plasmashell pre-flight); otherwise leave them running. Start them again when switching to Caelestia. The KWin workspace-tracker effect is not a process and stays loaded in KWin.

@@ -17,6 +17,7 @@
 #include <QJsonObject>
 #include <QMap>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QRegularExpression>
 
 namespace cs {
@@ -151,9 +152,14 @@ QJsonObject readJson(const QString &path)
 
 QString plasmaVersion()
 {
+    // plasmashell creates a QApplication even for --version; without a display (SSH) it
+    // aborts, so run it on the offscreen platform.
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("offscreen"));
     QProcess p;
+    p.setProcessEnvironment(env);
     p.start(QStringLiteral("plasmashell"), {QStringLiteral("--version")});
-    if (!p.waitForStarted(1000) || !p.waitForFinished(2000)) {
+    if (!p.waitForStarted(1000) || !p.waitForFinished(8000)) {
         p.kill();
         return QStringLiteral("unknown");
     }
@@ -431,7 +437,7 @@ OpResult createBackup(Side side, const QString &trigger, const BackupPaths &path
         {QStringLiteral("trigger"), trigger},
         {QStringLiteral("caelestiaCommit"), install.commit},
         {QStringLiteral("caelestiaVersion"), install.version},
-        {QStringLiteral("plasmaVersion"), plasmaVersion()},
+        {QStringLiteral("plasmaVersion"), paths.lookupPlasmaVersion ? plasmaVersion() : QStringLiteral("unknown")},
         {QStringLiteral("files"), files},
         {QStringLiteral("keyFiles"), QJsonArray::fromStringList(fileOrder)},
     };

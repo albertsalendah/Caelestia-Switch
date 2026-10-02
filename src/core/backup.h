@@ -19,6 +19,7 @@ struct BackupPaths {
     QString configHome;    // ~/.config
     QString dataRoot;      // ~/.local/share/caelestia-switch/backups
     QString appConfigDir;  // ~/.config/caelestia-switch (install marker)
+    bool lookupPlasmaVersion = true;  // runs `plasmashell --version`; tests switch it off
     static BackupPaths defaults();
 };
 
