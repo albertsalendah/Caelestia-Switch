@@ -1,0 +1,12 @@
+#pragma once
+#include <KConfig>
+class KConfigGroup {
+public:
+    KConfigGroup(KConfig *c, const QString &g) : m_c(c), m_g(g) {}
+    QMap<QString, QString> entryMap() const { return m_c->m_data.value(m_g); }
+    QString readEntry(const char *k, const QString &d) const { const auto &m = m_c->m_data.value(m_g); return m.contains(k) ? m.value(k) : d; }
+    void writeEntry(const char *k, const QString &v) { m_c->m_data[m_g].insert(k, v); m_c->m_dirty = true; }
+    void deleteEntry(const char *k) { m_c->m_data[m_g].remove(k); m_c->m_dirty = true; }
+private:
+    KConfig *m_c; QString m_g;
+};

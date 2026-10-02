@@ -1,0 +1,47 @@
+#pragma once
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QMap>
+#include <QString>
+#include <QStringList>
+#include <QTextStream>
+// Test stub of KConfig (sandbox only): flat INI, enough for plasmaconfig and backup.
+class KConfig {
+public:
+    enum OpenFlag { SimpleConfig = 1 };
+    KConfig(const QString &file, int = 0) : m_file(file) {
+        QFile f(file);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+        QString cur;
+        QTextStream in(&f);
+        while (!in.atEnd()) {
+            const QString l = in.readLine().trimmed();
+            if (l.isEmpty() || l.startsWith('#')) continue;
+            if (l.startsWith('[') && l.endsWith(']')) { cur = l.mid(1, l.size() - 2); continue; }
+            const int eq = l.indexOf('=');
+            if (eq > 0 && !cur.isEmpty()) m_data[cur].insert(l.left(eq).trimmed(), l.mid(eq + 1));
+        }
+    }
+    ~KConfig() { if (m_dirty) sync(); }
+    QStringList groupList() const { QStringList r; for (auto it = m_data.cbegin(); it != m_data.cend(); ++it) if (!it.value().isEmpty()) r << it.key(); return r; }
+    bool hasGroup(const QString &g) const { return m_data.contains(g) && !m_data.value(g).isEmpty(); }
+    void deleteGroup(const QString &g, int = 0) { m_data.remove(g); m_dirty = true; }
+    bool sync() {
+        QDir().mkpath(QFileInfo(m_file).absolutePath());
+        QFile f(m_file);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) return false;
+        QTextStream out(&f);
+        for (auto it = m_data.cbegin(); it != m_data.cend(); ++it) {
+            if (it.value().isEmpty()) continue;
+            out << '[' << it.key() << "]\n";
+            for (auto e = it.value().cbegin(); e != it.value().cend(); ++e) out << e.key() << '=' << e.value() << '\n';
+            out << '\n';
+        }
+        m_dirty = false;
+        return true;
+    }
+    QMap<QString, QMap<QString, QString>> m_data;
+    QString m_file;
+    bool m_dirty = false;
+};

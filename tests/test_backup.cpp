@@ -64,6 +64,7 @@ class TestBackup : public QObject
 
 private slots:
     void sideParsing();
+    void plasmaVersionParsing();
     void wholeFilesRoundTrip();
     void caelestiaSideOwnsCaelestiaDir();
     void keyLevelRoundTrip();
@@ -71,6 +72,16 @@ private slots:
     void listAndRefs();
     void badRefs();
 };
+
+void TestBackup::plasmaVersionParsing()
+{
+    const QString file = QStringLiteral("# The created file sets PACKAGE_VERSION_EXACT if the current version string and\n"
+                                        "# PACKAGE_VERSION_COMPATIBLE if the current version is >= requested version.\n"
+                                        "set(PACKAGE_VERSION \"6.7.5\")\n\nif(PACKAGE_VERSION VERSION_LESS PACKAGE_FIND_VERSION)\n");
+    QCOMPARE(parsePlasmaVersion(file), QStringLiteral("6.7.5"));
+    QCOMPARE(parsePlasmaVersion(QStringLiteral("# only comments\n")), QString());
+    QCOMPARE(parsePlasmaVersion(QString()), QString());
+}
 
 void TestBackup::sideParsing()
 {

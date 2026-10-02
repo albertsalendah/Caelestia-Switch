@@ -19,9 +19,12 @@ struct BackupPaths {
     QString configHome;    // ~/.config
     QString dataRoot;      // ~/.local/share/caelestia-switch/backups
     QString appConfigDir;  // ~/.config/caelestia-switch (install marker)
-    bool lookupPlasmaVersion = true;  // runs `plasmashell --version`; tests switch it off
+    bool lookupPlasmaVersion = true;  // reads the installed Plasma version from a file; tests switch it off
     static BackupPaths defaults();
 };
+
+// Plasma version from the text of LibKWorkspaceConfigVersion.cmake (`set(PACKAGE_VERSION "6.7.5")`); empty if absent.
+QString parsePlasmaVersion(const QString &cmakeVersionFileText);
 
 struct BackupInfo {
     Side side = Side::Stock;

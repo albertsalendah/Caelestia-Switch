@@ -16,8 +16,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMap>
-#include <QProcess>
-#include <QProcessEnvironment>
 #include <QRegularExpression>
 
 namespace cs {
@@ -152,19 +150,17 @@ QJsonObject readJson(const QString &path)
 
 QString plasmaVersion()
 {
-    // plasmashell creates a QApplication even for --version; without a display (SSH) it
-    // aborts, so run it on the offscreen platform.
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    env.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("offscreen"));
-    QProcess p;
-    p.setProcessEnvironment(env);
-    p.start(QStringLiteral("plasmashell"), {QStringLiteral("--version")});
-    if (!p.waitForStarted(1000) || !p.waitForFinished(8000)) {
-        p.kill();
-        return QStringLiteral("unknown");
+    // `plasmashell --version` crashes when started by the app, so read the version that the
+    // installed plasma-workspace ships in its CMake package instead (no process involved).
+    const QStringList candidates = {QStringLiteral("/usr/lib/cmake/LibKWorkspace/LibKWorkspaceConfigVersion.cmake"),
+                                    QStringLiteral("/usr/lib64/cmake/LibKWorkspace/LibKWorkspaceConfigVersion.cmake")};
+    for (const QString &path : candidates) {
+        const QString v = parsePlasmaVersion(readTextFile(path));
+        if (!v.isEmpty()) {
+            return v;
+        }
     }
-    const QString out = QString::fromUtf8(p.readAllStandardOutput()).trimmed();
-    return out.isEmpty() ? QStringLiteral("unknown") : out.section(QLatin1Char(' '), -1);
+    return QStringLiteral("unknown");
 }
 
 // ---- Key-level snapshots ----
@@ -342,6 +338,13 @@ bool parseRef(const QString &ref, Side *side, QString *id)
 }
 
 } // namespace
+
+QString parsePlasmaVersion(const QString &text)
+{
+    static const QRegularExpression re(QStringLiteral("^set\\(PACKAGE_VERSION\\s+\"([^\"]+)\"\\)"), QRegularExpression::MultilineOption);
+    const QRegularExpressionMatch m = re.match(text);
+    return m.hasMatch() ? m.captured(1) : QString();
+}
 
 QString sideKey(Side side)
 {
