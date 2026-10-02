@@ -1,6 +1,6 @@
 # Caelestia KDE Switch App & Fork — Architecture & Design Decisions
 
-*Revised 2026-10-01 (D4 resolved, D11 narrowed, D15 amended, D16 build note, D17 and D18 added). Supersedes the earlier "fork-first" version of this document.*
+*Revised 2026-10-02 (D4 resolved, D11 narrowed, D15 amended, D16 build note, D17-D19 added, D1 live finding). Supersedes the earlier "fork-first" version of this document.*
 
 ## What this project is now
 
@@ -22,6 +22,8 @@ Upstream's own architecture (Quickshell-based shell, native KWin bridges, the KW
 **Why:** the original plan baked masking into the fork's installer, but the switch app's `on` step already masks, so the installer step would have done the same job twice. Keeping it in the app means an unmodified ladybug-me install works with the app, and the fork stays purely customization. The boot-time behavior that Test 1 proved (plasmashell masked before login, clean ~6–7 s KWin-to-Caelestia handoff, two independent reboots) is unchanged; only who sets the mask differs.
 
 **Risk carried:** the dependency pre-flight must run live in the app before every mask, not be hardcoded from the test result: `systemctl --user show plasma-plasmashell.service -p WantedBy,RequiredBy,PartOf,BoundBy` with `RequiredBy`/`WantedBy`/`BoundBy` empty (only `PartOf=graphical-session.target`, which is one-directional). A KDE update could change that. If the check fails, the app refuses to mask.
+
+**Live finding 2026-10-02 (A3a test, ASUS), amendment PROPOSED, awaiting the user's decision:** in a logged-in session `plasma-plasmashell.service` shows `WantedBy=plasma-core.target` (with `RequiredBy`, `RequisiteOf` and `BoundBy` empty), so the pre-flight above refuses to mask. Test 1 (two masked boots) showed that the same relation does not stop a masked plasmashell: `WantedBy` is a weak dependency. Proposed rule: refuse only if `RequiredBy`, `RequisiteOf` or `BoundBy` is non-empty; allow `WantedBy`. Not implemented yet; the executor currently uses the strict rule and so `on --mask` is refused.
 
 ### D2 — The wallpaper mirror call: leave as-is (RESOLVED by D10)
 
@@ -154,6 +156,8 @@ Checked on the ASUS on 2026-10-01 against the 2026-09-30 stock reference:
 - **After the login:** `finish` waits for the readings to match the expected final state and closes out the state file (`mode` becomes `stock` / `caelestia`, `result=done`, `unseen=true`). The automatic trigger (a small user service `WantedBy=graphical-session.target` that runs `finish` and opens the app with the "switch complete" message, plus a desktop notification as a fallback) is the next batch.
 - **Helper units:** only `cliphist.service` is handled for now. The update checker is not a systemd unit in the installer scripts; `ydotoold.service` is left alone.
 - **Warning text before a switch** is in the spec (user wording, 2026-10-02).
+- **Live results (ASUS, 2026-10-02):** `off --no-logout --wait` ran steps 1-8 from inside the transient service (the graceful quit worked there, with the session display; about 6 s for the quit and the plasmashell stop); then a full `off --wait` with the automatic logout, `finish`, and a stock session with panel, wallpaper, `Meta+W`, corner, 1 workspace and Plasma's own lock screen; then a full `on --wait` back (Caelestia bar, `Meta+W` = Caelestia's Launch Browser, corner, 5 workspaces, Caelestia lock screen, `cliphist` re-enabled from the `helpers` file). Not yet live: `on --mask` (blocked by the D1 finding), `off` from a masked state, a switch interrupted by killing the app, the post-login automatic `finish`, `repair`.
+- **Plasma version label:** `plasmashell --version` crashes (core dump) when run by the app, so the Plasma version is read from `/usr/lib/cmake/LibKWorkspace/LibKWorkspaceConfigVersion.cmake` (`set(PACKAGE_VERSION "6.7.5")`); plasmashell's own `metadata.json` has no version.
 
 ### D17 — Status implementation choices (NEW, Phase A1, 2026-10-01)
 
