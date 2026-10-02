@@ -91,14 +91,21 @@ The GUI is a thin layer over a CLI core, so every action is scriptable and testa
 
 - `status` — unprivileged, read-only; prints the readings above (**implemented in Phase A1, 2026-10-01**). `--json` prints them as JSON. Exit code 0 even when Inconsistent, 3 if systemd cannot be queried. The "Backups present" reading is added in Phase A2.
 - `backup` / `restore` — unprivileged; create or apply a snapshot.
-- `on` / `off` — unprivileged; the switch rules above (`on` takes an option for the mask/disable-plasmashell behavior). Idempotent: switching to the mode you are already in is a no-op with exit 0.
+- `on` / `off` — unprivileged; the switch rules above. `on --mask` also stops and masks plasmashell. `--backup <side/id>` picks the backup to restore (default: the newest of the target side), `--no-logout` stops just before the logout (testing), `--wait` follows the progress. Idempotent: switching to the mode you are already in is a no-op with exit 0 (for `on`, only if the plasmashell mask state also matches the request). Implemented 2026-10-02.
+- `finish` — after the logout and login: waits for the expected final state, closes out the state file. `run-switch` is internal (the executor).
 - `repair` — unprivileged; only reachable when `status` reports Inconsistent. Reads the state file to find which switch was in progress and resumes from the last completed step. If the state file is missing or unreadable, falls back to restoring stock Plasma, the state with no fork-specific assumptions.
 - `install` / `uninstall` — privileged (explicit elevation prompt). Wraps the chosen source's installer/uninstaller. The user picks the source: ladybug-me upstream or the fork. Uninstalling while in Caelestia mode must run the restore first.
 - `update` — the check is unprivileged; applying it is privileged and only on explicit confirmation, never in the background. Upstream's `caelestia-check-updates` and `update.sh` hardcode the upstream repo and only accept `main`/`dev` (architecture doc D8), so the app must supply its own source choice.
 
 ## State file
 
-Path: `~/.config/caelestia-switch/state` (exact location not critical, but outside both Caelestia's and Plasma's config). Minimum content: current mode (`caelestia` / `stock` / `transitioning` / `pending-logout`) and, if transitioning, which step was last completed. Written synchronously after each step. This is the most important piece to get right (architecture doc D7, motivated by Test 16.5).
+Path: `~/.config/caelestia-switch/state`, outside both Caelestia's and Plasma's config. Simple `key=value` lines, `mode=` first (so `status` can read the first word leniently), written atomically after every step (architecture D7, D19). Keys: `mode` (`caelestia` / `stock` / `transitioning` / `pending-logout`), `direction` (`to-stock` / `to-caelestia`), `step` (last completed step), `stepName`, `targetRef` (backup applied), `snapshotRef` (automatic snapshot of the side left), `maskPlasmashell`, `logout`, `helpers` (helper units this switch disabled), `error`, `result` (`done` / `failed`), `unseen` (result not yet shown to the user). A second small file, `~/.config/caelestia-switch/helpers`, remembers which helper units the app disabled, so only those are re-enabled on the way back.
+
+## How a switch runs (decided 2026-10-02; architecture D19)
+
+The switch runs as its own process, never inside the app window. `on` / `off` (and later the GUI's Switch button) run the pre-flight, mark the state `transitioning`, and start `caelestia-switch run-switch` as a transient user service (`systemd-run --user --unit=caelestia-switch-run`, own cgroup), then only watch the state file. Killing or closing the app therefore changes nothing. The steps are those under "Order of operations"; each step's result is checked and the state file is updated after each. A step failure stops the switch without logging out and records `error`; `repair` (later batch) resumes or restores. After the next login `finish` waits for the expected readings, sets the mode to `caelestia` / `stock`, and marks the result `unseen` so the GUI can show it.
+
+**Warning text (confirmed by the user 2026-10-02), shown before the switch is confirmed:** "This will log you out. Save your work now. This window will close when the session ends and continue running in the background until it finish." After login the app reopens and tells the user the switch is finished (or what failed).
 
 ## `.desktop` entry
 

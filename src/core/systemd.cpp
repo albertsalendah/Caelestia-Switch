@@ -43,6 +43,11 @@ QDBusMessage callMethod(QDBusConnection &bus, const QString &path, const QString
 
 } // namespace
 
+QDBusConnection userBusConnection()
+{
+    return userBus();
+}
+
 bool queryUnit(const QString &unitName, UnitState &out, QString *error)
 {
     QDBusConnection bus = userBus();

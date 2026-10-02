@@ -5,9 +5,11 @@
 
 namespace cs {
 
-QString readShellPackage()
+QString readShellPackage(const QString &configHome)
 {
-    KConfig config(QStringLiteral("plasmashellrc"), KConfig::SimpleConfig);
+    const QString file = configHome.isEmpty() ? QStringLiteral("plasmashellrc")
+                                              : configHome + QStringLiteral("/plasmashellrc");
+    KConfig config(file, KConfig::SimpleConfig);
     KConfigGroup shell(&config, QStringLiteral("Shell"));
     return shell.readEntry("ShellPackage", QString()).trimmed();
 }

@@ -47,9 +47,11 @@ Timestamped two-sided snapshots, the dropdown listing, and the automatic snapsho
 
 **Done when:** a backup, change, restore round trip on the test laptop brings back stock panels, wallpaper, `Meta+W`, the Overview corner, and Caelestia's own settings, verified against the Test 14 symptoms. The clean-stop edge/shortcut case (D4) was tested on 2026-10-01 and is resolved by D18; its end-to-end check (off, logout, login) moves to Phase A3.
 
-### Phase A3 — Switch core (`on` / `off`)
+### Phase A3 — Switch core (`on` / `off`) — in progress
 
 The switch rules, graceful Caelestia quit (D18), helper-unit handling, state file, `repair`, and the logout step. Every step's result is checked explicitly: in the manual A2 round trip a `grep -c` that found 0 matches returned exit status 1 and silently skipped the logout. Also check in A3: the lock screen in stock mode (`Meta+L`; Plasma's own or still Caelestia's, since both `ShellPackage` and `kscreenlockerrc` change), and `plasmashell` started without panels in Caelestia mode.
+
+**Progress (2026-10-02):** batch A3a written and unit-tested (state file, executor, `on` / `off` / `finish`, 13 QtTest cases with a fake system); live test on the ASUS next, first with `--no-logout`. Still to do in A3: the automatic post-login `finish` (user service) with the reopen-and-notify message, `repair`, and the live checks listed above. Design: architecture D19.
 
 **Done when:** off, on, off, on (with the checkbox both checked and unchecked, and across real logouts) leaves the system in the expected state every time: no drift, no leftover broken shortcuts, no orphaned processes, no two UIs at once. Interrupting a switch mid-way (killing the app) is recoverable via `repair`.
 
