@@ -20,6 +20,8 @@ struct SwitchRequest {
     QString targetRef;                  // backup to restore; empty = newest of the target side
     bool maskPlasmashell = false;       // only meaningful for ToCaelestia
     bool logout = true;                 // false: stop just before the logout (live testing)
+    bool repair = false;                // a rollback built by planRepair: skips the checks a half-switched system fails
+    QString cause;                      // repair only: the original failure, stored in the state file
 };
 
 // Everything the switch needs; a struct so tests can use a fake system and fake paths.
@@ -37,6 +39,7 @@ struct SwitchPlan {
     QString targetRef;
     bool noop = false;                  // already in the requested mode
     bool unitsOnly = false;             // Caelestia is already running and only the plasmashell mask changes
+    bool leavingKnown = true;           // a shell was providing panels, so `leaving` is meaningful
     bool snapshot = true;               // take an automatic snapshot of `leaving` (false: nothing to snapshot)
     QString message;
     QStringList warnings;               // non-blocking notes (e.g. weak dependents of plasmashell)
@@ -87,6 +90,21 @@ SwitchOutcome runSwitch(const SwitchRequest &req, const SwitchContext &ctx);
 // After the next login: waits until the readings match the expected final state, closes out the
 // state file (mode caelestia/stock, result done, unseen). No-op unless the state is pending-logout.
 OpResult finishSwitch(const SwitchContext &ctx, int timeoutMs, int pollMs, QString *summary);
+
+// What `repair` would do, worked out from the state file and the readings (architecture D20).
+struct RepairPlan {
+    bool needed = false;                // false: nothing to repair, see `message`
+    bool alreadyThere = false;          // the system already matches the side that was left: only the state file is closed
+    SwitchRequest request;              // the rollback; run it with runSwitch / launchSwitch (request.repair is set)
+    QString failure;                    // what went wrong, with the cause if known
+    QString action;                     // what repair is going to do
+    QString message;                    // when !needed
+    QStringList warnings;
+};
+
+// Default repair: roll back to the side that was being left, using the automatic snapshot of step 2.
+// No usable state file: fall back to restoring stock Plasma (spec).
+OpResult planRepair(const SwitchContext &ctx, RepairPlan *plan);
 
 // Marks the state "transitioning", then starts runSwitch in a transient user service
 // (own cgroup, so stopping either shell cannot kill it). `exePath` is this binary.

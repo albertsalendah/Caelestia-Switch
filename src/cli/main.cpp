@@ -49,6 +49,7 @@ cs::SwitchRequest makeRequest(cs::Direction dir, const QCommandLineParser &parse
     req.targetRef = parser.value(QStringLiteral("backup"));
     req.maskPlasmashell = dir == cs::Direction::ToCaelestia && parser.isSet(QStringLiteral("mask"));
     req.logout = !parser.isSet(QStringLiteral("no-logout"));
+    req.repair = parser.isSet(QStringLiteral("as-repair"));   // run-switch started by `repair`; the cause is in the state file
     return req;
 }
 
@@ -67,6 +68,9 @@ int followSwitch(const QString &stateFile)
             }
             if (st.result == QLatin1String("failed")) {
                 out << "FAILED: " << st.error << '\n';
+                if (st.rolledBack || !st.cause.isEmpty()) {
+                    out << "The failure that started this repair: " << st.cause << '\n';
+                }
                 return 1;
             }
             if (st.mode == QLatin1String("pending-logout")) {
@@ -109,6 +113,51 @@ int cmdSwitch(cs::Direction dir, const QCommandLineParser &parser)
     }
     QTextStream(stdout) << "Switch started in the background (unit caelestia-switch-run). "
                            "It logs out at the end; the log is ~/.local/share/caelestia-switch/switch.log\n";
+    return parser.isSet(QStringLiteral("wait")) ? followSwitch(ctx.stateFile) : 0;
+}
+
+// Undoes a failed or interrupted switch: back to the side that was being left (architecture D20).
+int cmdRepair(const QCommandLineParser &parser)
+{
+    cs::RealOps ops;
+    const cs::SwitchContext ctx = makeContext(&ops);
+    QTextStream out(stdout);
+    cs::RepairPlan plan;
+    const cs::OpResult planned = cs::planRepair(ctx, &plan);
+    if (!planned.ok) {
+        QTextStream(stderr) << "caelestia-switch: repair is not possible: " << planned.error << '\n';
+        return 1;
+    }
+    if (!plan.needed) {
+        out << plan.message << '\n';
+        return 0;
+    }
+    out << plan.failure << ".\n";
+    for (const QString &w : std::as_const(plan.warnings)) {
+        out << "Note: " << w << '\n';
+    }
+    out << plan.action << '\n';
+    out.flush();
+
+    cs::SwitchRequest req = plan.request;
+    req.logout = !parser.isSet(QStringLiteral("no-logout"));
+    if (plan.alreadyThere) {
+        // Nothing is stopped or restored, so no background service is needed: close the record here.
+        const cs::SwitchOutcome res = cs::runSwitch(req, ctx);
+        if (!res.ok) {
+            QTextStream(stderr) << "caelestia-switch: " << res.error << '\n';
+            return 1;
+        }
+        out << "Done. No logout is needed.\n";
+        return 0;
+    }
+    const cs::OpResult res = cs::launchSwitch(req, ctx, QCoreApplication::applicationFilePath());
+    if (!res.ok) {
+        QTextStream(stderr) << "caelestia-switch: " << res.error << '\n';
+        return 1;
+    }
+    out << "Repair started in the background (unit caelestia-switch-run). "
+           "It logs out at the end; after logging in, run 'finish'. The log is ~/.local/share/caelestia-switch/switch.log\n";
     return parser.isSet(QStringLiteral("wait")) ? followSwitch(ctx.stateFile) : 0;
 }
 
@@ -228,7 +277,7 @@ int main(int argc, char *argv[])
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral(
         "Switch between Plasma and Caelestia KDE.\n\n"
-        "Commands: status, backup, backups, restore <side/id>, on, off, finish. Planned: repair, install, update, uninstall."));
+        "Commands: status, backup, backups, restore <side/id>, on, off, finish, repair. Planned: install, update, uninstall."));
     parser.addHelpOption();
     parser.addVersionOption();
     parser.addOption(QCommandLineOption(QStringLiteral("json"), QStringLiteral("status: print the readings as JSON.")));
@@ -237,9 +286,10 @@ int main(int argc, char *argv[])
     parser.addOption(QCommandLineOption(QStringLiteral("mask"), QStringLiteral("on: also stop and mask plasmashell.")));
     parser.addOption(QCommandLineOption(QStringLiteral("backup"), QStringLiteral("on/off: backup to restore (side/id); default: the newest of the target side."),
                                         QStringLiteral("ref")));
-    parser.addOption(QCommandLineOption(QStringLiteral("no-logout"), QStringLiteral("on/off: stop just before the logout (for testing).")));
-    parser.addOption(QCommandLineOption(QStringLiteral("wait"), QStringLiteral("on/off: follow the progress until the logout.")));
+    parser.addOption(QCommandLineOption(QStringLiteral("no-logout"), QStringLiteral("on/off/repair: stop just before the logout (for testing).")));
+    parser.addOption(QCommandLineOption(QStringLiteral("wait"), QStringLiteral("on/off/repair: follow the progress until the logout.")));
     parser.addOption(QCommandLineOption(QStringLiteral("direction"), QStringLiteral("run-switch (internal): to-stock or to-caelestia."), QStringLiteral("dir")));
+    parser.addOption(QCommandLineOption(QStringLiteral("as-repair"), QStringLiteral("run-switch (internal): this run is a repair.")));
     parser.addOption(QCommandLineOption(QStringLiteral("timeout"), QStringLiteral("finish: seconds to wait for the final state (default 60)."), QStringLiteral("seconds")));
     parser.addPositionalArgument(QStringLiteral("command"), QStringLiteral("Command to run."));
     parser.process(app);
@@ -272,6 +322,9 @@ int main(int argc, char *argv[])
     }
     if (cmd == QLatin1String("finish")) {
         return cmdFinish(parser);
+    }
+    if (cmd == QLatin1String("repair")) {
+        return cmdRepair(parser);
     }
     QTextStream(stderr) << "caelestia-switch: '" << cmd << "' is not implemented yet.\n";
     return 2;

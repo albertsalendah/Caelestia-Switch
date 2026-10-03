@@ -191,6 +191,32 @@ struct Env {
     }
 };
 
+// Neither shell running: what a switch that stopped half-way (or an interrupted one) leaves behind.
+Readings halfSwitched(const QString &caelestiaFileState = QStringLiteral("enabled"))
+{
+    Readings r;
+    r.systemdReachable = true;
+    r.caelestiaUnit = unit("loaded", "inactive", "dead", caelestiaFileState);
+    r.plasmashellUnit = unit("loaded", "inactive", "dead", "static");
+    r.install.installed = true;
+    return finish(r);
+}
+
+// A to-stock switch that fails in step 6 (disable Caelestia); returns the state file it leaves.
+SwitchState makeFailedToStock(Env &e)
+{
+    e.setShellPackage(QString());
+    e.backup(Side::Stock);
+    e.setShellPackage(QStringLiteral("caelestia.desktop"));
+    FakeOps broken(caelestiaMode(), e.configHome());
+    broken.failOn << QStringLiteral("systemctl disable caelestia-shell.service");
+    e.ctx.ops = &broken;
+    SwitchRequest req;
+    req.direction = Direction::ToStock;
+    runSwitch(req, e.ctx);
+    return e.state();
+}
+
 } // namespace
 
 class TestSwitch : public QObject
@@ -216,6 +242,13 @@ private slots:
     void finishSucceeds();
     void finishTimesOut();
     void finishNothingToDo();
+    void repairRollsBackFailedSwitch();
+    void repairInterruptedSwitch();
+    void repairWithoutStateFallsBackToStock();
+    void repairNothingToUndo();
+    void repairRefusals();
+    void repairUndoesMaskOnlyChange();
+    void repairFailureStartsTheShell();
 };
 
 void TestSwitch::stateRoundTrip()
@@ -235,6 +268,11 @@ void TestSwitch::stateRoundTrip()
     s.error = QStringLiteral("line one\nline two");
     s.result = QStringLiteral("failed");
     s.unseen = true;
+    s.leaving = QStringLiteral("caelestia");
+    s.plasmaWasMasked = true;
+    s.failedStep = 6;
+    s.cause = QStringLiteral("it broke\nhere");
+    s.rolledBack = true;
     QVERIFY(writeState(path, s));
 
     SwitchState t;
@@ -248,6 +286,11 @@ void TestSwitch::stateRoundTrip()
     QCOMPARE(t.helpers, s.helpers);
     QCOMPARE(t.error, QStringLiteral("line one line two"));
     QVERIFY(t.unseen);
+    QCOMPARE(t.leaving, QStringLiteral("caelestia"));
+    QVERIFY(t.plasmaWasMasked);
+    QCOMPARE(t.failedStep, 6);
+    QCOMPARE(t.cause, QStringLiteral("it broke here"));
+    QVERIFY(t.rolledBack);
 
     // `status` reads the first line leniently: it must stay "mode=...".
     QCOMPARE(parseStateMode(readFileText(path)), QStringLiteral("pending-logout"));
@@ -716,6 +759,247 @@ void TestSwitch::finishNothingToDo()
     QString summary;
     QVERIFY(finishSwitch(e.ctx, 50, 10, &summary).ok);
     QCOMPARE(summary, QStringLiteral("nothing to finish"));
+}
+
+void TestSwitch::repairRollsBackFailedSwitch()
+{
+    Env e;
+    const SwitchState failed = makeFailedToStock(e);
+    QCOMPARE(failed.mode, QStringLiteral("transitioning"));
+    QCOMPARE(failed.leaving, QStringLiteral("caelestia"));
+    QCOMPARE(failed.failedStep, int(StepUnits));
+    QVERIFY(failed.snapshotRef.startsWith(QStringLiteral("caelestia/")));
+    QVERIFY(isStockShellPackage(readShellPackage(e.configHome())));      // the stock config was already restored
+
+    // The system as the failed switch left it: both shells stopped, helper disabled.
+    FakeOps fixer(halfSwitched(), e.configHome());
+    fixer.units[QStringLiteral("cliphist.service")] = unit("loaded", "inactive", "dead", "disabled");
+    e.ctx.ops = &fixer;
+
+    RepairPlan plan;
+    QVERIFY(planRepair(e.ctx, &plan).ok);
+    QVERIFY(plan.needed && !plan.alreadyThere);
+    QVERIFY(plan.request.repair);
+    QCOMPARE(plan.request.direction, Direction::ToCaelestia);          // back to the side that was left
+    QCOMPARE(plan.request.targetRef, failed.snapshotRef);
+    QVERIFY(!plan.request.maskPlasmashell);
+    QVERIFY(plan.failure.contains(QStringLiteral("failed at step 6")));
+    QVERIFY(plan.failure.contains(QStringLiteral("unit changes")));
+    QVERIFY(plan.failure.contains(QStringLiteral("systemctl disable caelestia-shell.service failed")));   // the cause
+    QVERIFY(plan.action.contains(failed.snapshotRef));
+
+    const int backupsBefore = listBackups(e.ctx.paths).size();
+    const SwitchOutcome out = runSwitch(plan.request, e.ctx);
+    QVERIFY2(out.ok, qPrintable(out.error));
+    QCOMPARE(readShellPackage(e.configHome()), QStringLiteral("caelestia.desktop"));
+    QVERIFY(fixer.indexOf(QStringLiteral("quit-caelestia")) >= 0);
+    QVERIFY(fixer.indexOf(QStringLiteral("systemctl enable --now cliphist.service")) >= 0);
+    QVERIFY(fixer.indexOf(QStringLiteral("systemctl enable caelestia-shell.service")) >= 0);
+    QCOMPARE(fixer.indexOf(QStringLiteral("logout")), fixer.commands.size() - 1);
+    QCOMPARE(listBackups(e.ctx.paths).size(), backupsBefore);          // a half-switched state is never snapshotted
+    SwitchState st = e.state();
+    QCOMPARE(st.mode, QStringLiteral("pending-logout"));
+    QVERIFY(st.rolledBack);
+    QVERIFY(st.cause.contains(QStringLiteral("failed at step 6")));
+
+    // After the login, `finish` says it was a rollback and why.
+    FakeOps back(caelestiaMode(), e.configHome());
+    e.ctx.ops = &back;
+    QString summary;
+    QVERIFY(finishSwitch(e.ctx, 200, 10, &summary).ok);
+    QVERIFY(summary.startsWith(QStringLiteral("Rolled back")));
+    QVERIFY(summary.contains(QStringLiteral("failed at step 6")));
+    QVERIFY(summary.contains(QStringLiteral("Caelestia mode")));
+    st = e.state();
+    QCOMPARE(st.mode, QStringLiteral("caelestia"));
+    QCOMPARE(st.result, QStringLiteral("rolled-back"));
+    QVERIFY(st.unseen && st.rolledBack && st.error.isEmpty());
+}
+
+void TestSwitch::repairInterruptedSwitch()
+{
+    // The executor was killed after step 4 of a switch to Caelestia: no error and no result were recorded.
+    Env e;
+    e.setShellPackage(QString());
+    const QString stockRef = e.backup(Side::Stock);
+    e.setShellPackage(QStringLiteral("caelestia.desktop"));
+    SwitchState st;
+    st.mode = QStringLiteral("transitioning");
+    st.direction = QStringLiteral("to-caelestia");
+    st.step = 4;
+    st.stepName = QStringLiteral("helper units");
+    st.leaving = QStringLiteral("stock");
+    st.snapshotRef = stockRef;
+    QVERIFY(writeState(e.ctx.stateFile, st));
+    FakeOps ops(halfSwitched(), e.configHome());
+    e.ctx.ops = &ops;
+
+    RepairPlan plan;
+    QVERIFY(planRepair(e.ctx, &plan).ok);
+    QVERIFY(plan.needed);
+    QVERIFY2(plan.failure.contains(QStringLiteral("interrupted after step 4")), qPrintable(plan.failure));
+    QVERIFY(plan.failure.contains(QStringLiteral("no failure was recorded")));
+    QCOMPARE(plan.request.direction, Direction::ToStock);              // back to stock, the side that was left
+    QCOMPARE(plan.request.targetRef, stockRef);
+
+    const SwitchOutcome out = runSwitch(plan.request, e.ctx);
+    QVERIFY2(out.ok, qPrintable(out.error));
+    QVERIFY(isStockShellPackage(readShellPackage(e.configHome())));
+    QVERIFY(ops.indexOf(QStringLiteral("systemctl disable caelestia-shell.service")) >= 0);
+    QCOMPARE(ops.indexOf(QStringLiteral("logout")), ops.commands.size() - 1);
+}
+
+void TestSwitch::repairWithoutStateFallsBackToStock()
+{
+    Env e;
+    e.setShellPackage(QString());
+    e.backup(Side::Stock);
+    e.setShellPackage(QStringLiteral("caelestia.desktop"));
+    FakeOps ops(halfSwitched("disabled"), e.configHome());             // inconsistent, and there is no state file
+    e.ctx.ops = &ops;
+
+    RepairPlan plan;
+    QVERIFY(planRepair(e.ctx, &plan).ok);
+    QVERIFY(plan.needed);
+    QVERIFY(plan.failure.contains(QStringLiteral("No switch is recorded")));
+    QVERIFY(plan.warnings.join(QLatin1Char(' ')).contains(QStringLiteral("no record")));
+    QCOMPARE(plan.request.direction, Direction::ToStock);
+    QVERIFY2(runSwitch(plan.request, e.ctx).ok, "fallback repair");
+    QVERIFY(isStockShellPackage(readShellPackage(e.configHome())));
+
+    // Without a stock backup there is nothing to restore from: refused with the reason.
+    Env e2;
+    FakeOps ops2(halfSwitched("disabled"), e2.configHome());
+    e2.ctx.ops = &ops2;
+    RepairPlan plan2;
+    const OpResult r = planRepair(e2.ctx, &plan2);
+    QVERIFY(!r.ok);
+    QVERIFY(r.error.contains(QStringLiteral("no stock-side backup")));
+}
+
+void TestSwitch::repairNothingToUndo()
+{
+    // The executor failed in its own pre-flight (step 1): nothing was changed, only the record is stale.
+    Env e;
+    FakeOps ops(caelestiaMode(), e.configHome());
+    e.ctx.ops = &ops;
+    SwitchState st;
+    st.mode = QStringLiteral("transitioning");
+    st.direction = QStringLiteral("to-stock");
+    st.leaving = QStringLiteral("caelestia");
+    st.error = QStringLiteral("no stock-side backup exists");
+    st.result = QStringLiteral("failed");
+    st.failedStep = StepPreflight;
+    QVERIFY(writeState(e.ctx.stateFile, st));
+
+    RepairPlan plan;
+    QVERIFY(planRepair(e.ctx, &plan).ok);
+    QVERIFY(plan.needed && plan.alreadyThere);
+    QVERIFY(plan.failure.contains(QStringLiteral("failed at step 1")));
+    const SwitchOutcome out = runSwitch(plan.request, e.ctx);
+    QVERIFY(out.ok && out.noop);
+    QVERIFY(ops.commands.isEmpty());
+    const SwitchState after = e.state();
+    QCOMPARE(after.mode, QStringLiteral("caelestia"));
+    QCOMPARE(after.result, QStringLiteral("rolled-back"));
+    QVERIFY(after.rolledBack && after.unseen);
+    QVERIFY(after.cause.contains(QStringLiteral("failed at step 1")));
+}
+
+void TestSwitch::repairRefusals()
+{
+    Env e;
+    FakeOps waiting(halfSwitched(), e.configHome());
+    e.ctx.ops = &waiting;
+    SwitchState st;
+    st.mode = QStringLiteral("pending-logout");                        // the normal wait for the logout
+    st.direction = QStringLiteral("to-stock");
+    st.step = 8;
+    QVERIFY(writeState(e.ctx.stateFile, st));
+    RepairPlan plan;
+    QVERIFY(planRepair(e.ctx, &plan).ok);
+    QVERIFY(!plan.needed);
+    QVERIFY(plan.message.contains(QStringLiteral("finish")));
+
+    Env e2;                                                            // consistent system, nothing recorded
+    FakeOps fine(caelestiaMode(), e2.configHome());
+    e2.ctx.ops = &fine;
+    RepairPlan plan2;
+    QVERIFY(planRepair(e2.ctx, &plan2).ok);
+    QVERIFY(!plan2.needed);
+    QVERIFY(plan2.message.contains(QStringLiteral("Nothing to repair")));
+}
+
+void TestSwitch::repairUndoesMaskOnlyChange()
+{
+    // A mask-only switch masked plasmashell, then the logout call failed. Repair puts the mask back,
+    // restores nothing and snapshots nothing (Caelestia is running).
+    Env e;
+    e.setShellPackage(QStringLiteral("caelestia.desktop"));
+    FakeOps ops(caelestiaMode(/*plasmaMasked=*/true), e.configHome());
+    e.ctx.ops = &ops;
+    SwitchState st;
+    st.mode = QStringLiteral("pending-logout");
+    st.direction = QStringLiteral("to-caelestia");
+    st.maskPlasmashell = true;
+    st.leaving = QStringLiteral("caelestia");
+    st.plasmaWasMasked = false;
+    st.step = 8;
+    st.error = QStringLiteral("no logout");
+    st.failedStep = StepLogout;
+    QVERIFY(writeState(e.ctx.stateFile, st));
+
+    RepairPlan plan;
+    QVERIFY(planRepair(e.ctx, &plan).ok);
+    QVERIFY(plan.needed && !plan.alreadyThere);
+    QCOMPARE(plan.request.direction, Direction::ToCaelestia);
+    QVERIFY(!plan.request.maskPlasmashell);
+    QVERIFY(plan.request.targetRef.isEmpty());
+    QVERIFY(plan.action.contains(QStringLiteral("mask")));
+    QVERIFY(plan.warnings.join(QLatin1Char(' ')).contains(QStringLiteral("finish")));   // "just log out and finish" hint
+
+    const SwitchOutcome out = runSwitch(plan.request, e.ctx);
+    QVERIFY2(out.ok, qPrintable(out.error));
+    QVERIFY(ops.indexOf(QStringLiteral("systemctl unmask plasma-plasmashell.service")) >= 0);
+    QVERIFY(ops.indexOf(QStringLiteral("quit-caelestia")) < 0);
+    QCOMPARE(listBackups(e.ctx.paths).size(), 0);
+    QCOMPARE(ops.indexOf(QStringLiteral("logout")), ops.commands.size() - 1);
+}
+
+void TestSwitch::repairFailureStartsTheShell()
+{
+    // If the rollback itself fails, the session must not be left without a shell, the original cause
+    // must survive, and the repair can simply be run again.
+    Env e;
+    const SwitchState failed = makeFailedToStock(e);
+    FakeOps fixer(halfSwitched(), e.configHome());
+    fixer.failOn << QStringLiteral("systemctl enable caelestia-shell.service");
+    e.ctx.ops = &fixer;
+
+    RepairPlan plan;
+    QVERIFY(planRepair(e.ctx, &plan).ok);
+    const SwitchOutcome out = runSwitch(plan.request, e.ctx);
+    QVERIFY(!out.ok);
+    QCOMPARE(out.failedStep, int(StepUnits));
+    QVERIFY(fixer.indexOf(QStringLiteral("systemctl start caelestia-shell.service")) >= 0);
+    QVERIFY(out.error.contains(QStringLiteral("started caelestia-shell.service")));
+    QVERIFY(fixer.indexOf(QStringLiteral("logout")) < 0);
+    SwitchState st = e.state();
+    QCOMPARE(st.result, QStringLiteral("failed"));
+    QVERIFY(!st.rolledBack);
+    QVERIFY(st.cause.contains(QStringLiteral("systemctl disable caelestia-shell.service failed")));   // the original cause
+
+    // Second attempt: the plan still names the original failure and the original snapshot (even though a
+    // newer backup of that side exists meanwhile), and now succeeds.
+    e.backup(Side::Caelestia);
+    fixer.failOn.clear();
+    RepairPlan again;
+    QVERIFY(planRepair(e.ctx, &again).ok);
+    QVERIFY(again.needed);
+    QVERIFY(again.failure.contains(QStringLiteral("failed at step 6")));
+    QCOMPARE(again.request.targetRef, failed.snapshotRef);
+    QVERIFY2(runSwitch(again.request, e.ctx).ok, "second repair");
+    QVERIFY(e.state().rolledBack);
 }
 
 QTEST_GUILESS_MAIN(TestSwitch)

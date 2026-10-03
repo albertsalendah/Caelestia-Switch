@@ -102,6 +102,66 @@ QString maskWeakMessage(const QStringList &weak)
         .arg(weak.join(QStringLiteral(", ")));
 }
 
+QString stepLabel(int step)
+{
+    switch (step) {
+    case StepPreflight:
+        return QStringLiteral("pre-flight");
+    case StepSnapshot:
+        return QStringLiteral("snapshot of the side being left");
+    case StepStopOutgoing:
+        return QStringLiteral("stopping the outgoing shell");
+    case StepHelpers:
+        return QStringLiteral("helper units");
+    case StepRestore:
+        return QStringLiteral("config restore");
+    case StepUnits:
+        return QStringLiteral("unit changes");
+    case StepVerify:
+        return QStringLiteral("verification");
+    case StepLogout:
+        return QStringLiteral("logout");
+    default:
+        break;
+    }
+    return QStringLiteral("unknown step");
+}
+
+QString shellLabel(bool stock)
+{
+    return stock ? QStringLiteral("stock Plasma") : QStringLiteral("Caelestia");
+}
+
+// One sentence saying what went wrong in the switch the state file describes (architecture D20).
+QString describeFailure(const SwitchState &st)
+{
+    if (!st.cause.isEmpty()) {
+        return st.cause;   // a repair of a repair keeps the original failure
+    }
+    const QString target = shellLabel(st.direction == directionKey(Direction::ToStock));
+    const bool failed = st.result == QLatin1String("failed") || !st.error.isEmpty();
+    if (st.mode == QLatin1String("pending-logout") && st.failedStep == 0 && failed) {
+        return QStringLiteral("The switch to %1 finished its steps, but the expected state was not reached after the login: %2")
+            .arg(target, st.error);
+    }
+    if (failed) {
+        const int step = st.failedStep > 0 ? st.failedStep : st.step + 1;
+        return QStringLiteral("The last switch to %1 failed at step %2 (%3): %4").arg(target).arg(step).arg(stepLabel(step), st.error);
+    }
+    return QStringLiteral("The last switch to %1 was interrupted after step %2 (%3); no failure was recorded")
+        .arg(target).arg(st.step).arg(st.stepName.isEmpty() ? QStringLiteral("nothing done yet") : st.stepName);
+}
+
+QString rolledBackSummary(const QString &cause, bool toStock)
+{
+    QString c = cause.trimmed();
+    while (c.endsWith(QLatin1Char('.'))) {
+        c.chop(1);
+    }
+    return QStringLiteral("Rolled back: %1. You are back in %2 mode.")
+        .arg(c.isEmpty() ? QStringLiteral("the switch did not complete") : c, shellLabel(toStock));
+}
+
 } // namespace
 
 MaskCheck checkMaskPlasmashell(SwitchOps *ops)
@@ -157,7 +217,7 @@ OpResult preflight(const SwitchRequest &req, const SwitchContext &ctx, bool chec
     const auto fail = [](const QString &why) { return OpResult{false, why, {}}; };
 
     SwitchState st;
-    if (checkState && readState(ctx.stateFile, &st)
+    if (checkState && !req.repair && readState(ctx.stateFile, &st)
         && (st.mode == QLatin1String("transitioning") || st.mode == QLatin1String("pending-logout"))) {
         return fail(QStringLiteral("a switch is already in progress or waiting for the logout (mode=%1); "
                                    "use 'finish' after logging in, or 'repair'").arg(st.mode));
@@ -167,8 +227,9 @@ OpResult preflight(const SwitchRequest &req, const SwitchContext &ctx, bool chec
     if (!r.systemdReachable) {
         return fail(QStringLiteral("cannot query the systemd user manager: %1").arg(r.systemdError));
     }
+    // A repair exists to fix a half-switched system, so it is the one caller that skips the consistency check.
     const QStringList reasons = checkState ? r.inconsistentReasons : withoutStateReasons(r.inconsistentReasons);
-    if (!reasons.isEmpty()) {
+    if (!req.repair && !reasons.isEmpty()) {
         return fail(QStringLiteral("the current state is inconsistent (%1); fix it with 'repair' first").arg(reasons.join(QStringLiteral("; "))));
     }
 
@@ -199,16 +260,23 @@ OpResult preflight(const SwitchRequest &req, const SwitchContext &ctx, bool chec
     } else if (r.provider == Provider::Plasma) {
         p.leaving = Side::Stock;
     } else {
+        p.leavingKnown = false;
         p.snapshot = false;
-        p.warnings << QStringLiteral("neither shell was providing panels, so no snapshot of the side being left was taken");
+        if (!req.repair) {
+            p.warnings << QStringLiteral("neither shell was providing panels, so no snapshot of the side being left was taken");
+        }
+    }
+    if (req.repair) {
+        p.snapshot = false;   // never file a half-switched state under a side's name
     }
 
     // Not a no-op and Caelestia already runs: only the plasmashell mask differs. Nothing is stopped,
     // snapshotted or restored (restoring config into the running Caelestia is untested and unsafe).
-    p.unitsOnly = !toStock && r.provider == Provider::Caelestia;
+    // (A repair that has a snapshot to restore takes the full path instead: Caelestia is quit first, then restored.)
+    p.unitsOnly = !toStock && r.provider == Provider::Caelestia && (!req.repair || req.targetRef.isEmpty());
     if (p.unitsOnly) {
         p.snapshot = false;
-        if (!req.targetRef.isEmpty()) {
+        if (!req.targetRef.isEmpty() && !req.repair) {
             return fail(QStringLiteral("Caelestia is already running, so a backup would not be restored and has no effect here; "
                                        "leave out --backup, or switch to stock first"));
         }
@@ -255,10 +323,27 @@ SwitchOutcome runSwitch(const SwitchRequest &req, const SwitchContext &ctx)
 {
     SwitchOutcome out;
     SwitchState st;
+    if (req.repair) {
+        readState(ctx.stateFile, &st);   // keeps what the switch being repaired recorded (leaving, cause, ...)
+    }
     st.mode = QStringLiteral("transitioning");
     st.direction = directionKey(req.direction);
     st.maskPlasmashell = req.maskPlasmashell;
     st.logout = req.logout;
+    st.step = 0;
+    st.stepName.clear();
+    st.targetRef.clear();
+    if (!req.repair) {
+        st.snapshotRef.clear();   // a repair keeps the snapshot of the switch it undoes, so it can be run again
+    }
+    st.helpers.clear();
+    st.error.clear();
+    st.result.clear();
+    st.failedStep = 0;
+    st.rolledBack = false;
+    if (req.repair && !req.cause.isEmpty()) {
+        st.cause = req.cause;
+    }
     const bool toStock = req.direction == Direction::ToStock;
 
     QDir().mkpath(QFileInfo(ctx.stateFile).absolutePath());
@@ -276,14 +361,25 @@ SwitchOutcome runSwitch(const SwitchRequest &req, const SwitchContext &ctx)
         }
     };
     const auto fail = [&](int step, const QString &why) {
-        st.error = why;
+        QString msg = why;
+        if (req.repair && step >= StepStopOutgoing) {
+            // Safety net: the rollback itself failed after shells were stopped. Do not leave the session
+            // without a shell (the black desktop seen in the manual round trips): start the one being restored.
+            const QString unit = toStock ? kPlasmashellUnit : kCaelestiaUnit;
+            QString e;
+            msg += ctx.ops->systemctl({QStringLiteral("start"), unit}, &e)
+                ? QStringLiteral(" (started %1 so the session is not left without a shell; run 'repair' again)").arg(unit)
+                : QStringLiteral(" (could not start %1 either: %2)").arg(unit, e);
+        }
+        st.error = msg;
         st.result = QStringLiteral("failed");
+        st.failedStep = step;
         st.step = step - 1;
         save();
         out.ok = false;
-        out.error = why;
+        out.error = msg;
         out.failedStep = step;
-        note(ctx, QStringLiteral("step %1 FAILED: %2").arg(step).arg(why));
+        note(ctx, QStringLiteral("step %1 FAILED: %2").arg(step).arg(msg));
         return out;
     };
     const auto done = [&](int step, const QString &name) {
@@ -302,8 +398,12 @@ SwitchOutcome runSwitch(const SwitchRequest &req, const SwitchContext &ctx)
     if (plan.noop) {
         // Nothing to do: leave the state file describing the settled mode.
         st.mode = toStock ? QStringLiteral("stock") : QStringLiteral("caelestia");
-        st.result = QStringLiteral("done");
+        st.result = req.repair ? QStringLiteral("rolled-back") : QStringLiteral("done");
         st.step = StepFinished;
+        if (req.repair) {
+            st.rolledBack = true;   // the system already matched the side that was left; only the record is closed
+            st.unseen = true;
+        }
         save();
         out.noop = true;
         return out;
@@ -311,6 +411,11 @@ SwitchOutcome runSwitch(const SwitchRequest &req, const SwitchContext &ctx)
     st.targetRef = plan.targetRef;
     out.warnings << plan.warnings;
     const Readings before = ctx.ops->readings();
+    if (!req.repair) {
+        // What `repair` needs to undo this switch later.
+        st.leaving = plan.leavingKnown ? sideKey(plan.leaving) : QStringLiteral("none");
+        st.plasmaWasMasked = before.plasmashellUnit.masked();
+    }
     done(StepPreflight, QStringLiteral("pre-flight"));
 
     // 2. Automatic snapshot of the mode being left.
@@ -323,8 +428,9 @@ SwitchOutcome runSwitch(const SwitchRequest &req, const SwitchContext &ctx)
         st.snapshotRef = snapRef;
         done(StepSnapshot, QStringLiteral("snapshot %1").arg(snapRef));
     } else {
-        done(StepSnapshot, plan.unitsOnly ? QStringLiteral("no snapshot (only the mask changes)")
-                                          : QStringLiteral("no snapshot (no shell was providing panels)"));
+        done(StepSnapshot, req.repair ? QStringLiteral("no snapshot (repair)")
+                                      : plan.unitsOnly ? QStringLiteral("no snapshot (only the mask changes)")
+                                                       : QStringLiteral("no snapshot (no shell was providing panels)"));
     }
 
     // 3. Stop the outgoing shell (config must only be written after it has stopped).
@@ -335,7 +441,7 @@ SwitchOutcome runSwitch(const SwitchRequest &req, const SwitchContext &ctx)
         // Caelestia keeps running and no config is written, so nothing needs to stop before the logout.
         done(StepStopOutgoing, QStringLiteral("no shell stopped (only the mask changes)"));
     } else {
-        if (toStock) {
+        if (toStock || req.repair) {   // a repair may have to restore Caelestia's config: quit it first, as for any restore
             if (!ctx.ops->stopCaelestiaGracefully(&out.warnings, &err)) {
                 return fail(StepStopOutgoing, QStringLiteral("could not stop Caelestia: %1").arg(err));
             }
@@ -458,10 +564,12 @@ SwitchOutcome runSwitch(const SwitchRequest &req, const SwitchContext &ctx)
 
     // 8. Pending logout, then log out.
     st.mode = QStringLiteral("pending-logout");
+    st.rolledBack = req.repair;
     done(StepLogout, QStringLiteral("waiting for logout"));
     if (req.logout) {
         if (!ctx.ops->logout(&err)) {
             st.error = err;
+            st.failedStep = StepLogout;
             save();
             out.ok = false;
             out.error = QStringLiteral("%1; log out manually, then run 'finish'").arg(err);
@@ -498,15 +606,17 @@ OpResult finishSwitch(const SwitchContext &ctx, int timeoutMs, int pollMs, QStri
     if (problems.isEmpty()) {
         const bool toStock = st.direction == directionKey(Direction::ToStock);
         st.mode = toStock ? QStringLiteral("stock") : QStringLiteral("caelestia");
-        st.result = QStringLiteral("done");
+        st.result = st.rolledBack ? QStringLiteral("rolled-back") : QStringLiteral("done");
         st.error.clear();
+        st.failedStep = 0;
         st.step = StepFinished;
         st.stepName = QStringLiteral("finished");
         st.unseen = true;
         writeState(ctx.stateFile, st);
         if (summary) {
-            *summary = toStock ? QStringLiteral("Switch complete: you are now in stock Plasma mode.")
-                               : QStringLiteral("Switch complete: you are now in Caelestia mode.");
+            *summary = st.rolledBack ? rolledBackSummary(st.cause, toStock)
+                : toStock ? QStringLiteral("Switch complete: you are now in stock Plasma mode.")
+                          : QStringLiteral("Switch complete: you are now in Caelestia mode.");
         }
         note(ctx, QStringLiteral("finished: %1").arg(summary ? *summary : QString()));
         return {};
@@ -517,6 +627,102 @@ OpResult finishSwitch(const SwitchContext &ctx, int timeoutMs, int pollMs, QStri
     writeState(ctx.stateFile, st);
     note(ctx, QStringLiteral("finish FAILED: %1").arg(st.error));
     return {false, QStringLiteral("the expected state was not reached: %1").arg(st.error), {}};
+}
+
+OpResult planRepair(const SwitchContext &ctx, RepairPlan *out)
+{
+    RepairPlan p;
+    const auto fail = [](const QString &why) { return OpResult{false, why, {}}; };
+    const auto give = [&]() {
+        if (out) {
+            *out = p;
+        }
+        return OpResult{};
+    };
+
+    const Readings r = ctx.ops->readings();
+    if (!r.systemdReachable) {
+        return fail(QStringLiteral("cannot query the systemd user manager: %1").arg(r.systemdError));
+    }
+    SwitchState st;
+    const bool hasState = readState(ctx.stateFile, &st);
+    const bool failedState = hasState
+        && (st.mode == QLatin1String("transitioning")
+            || (st.mode == QLatin1String("pending-logout") && (st.result == QLatin1String("failed") || !st.error.isEmpty())));
+    const QStringList reasons = withoutStateReasons(r.inconsistentReasons);
+
+    if (hasState && st.mode == QLatin1String("pending-logout") && !failedState) {
+        p.message = QStringLiteral("Nothing to repair: the switch finished its steps and is waiting for the logout. "
+                                   "Log out, then run 'finish'.");
+        return give();
+    }
+    if (!failedState && reasons.isEmpty()) {
+        p.message = QStringLiteral("Nothing to repair: the system is consistent and no failed switch is recorded.");
+        return give();
+    }
+
+    // The side that was being left. Without a usable record the spec's fallback applies: stock Plasma.
+    QString leaving = QStringLiteral("none");
+    if (failedState) {
+        leaving = !st.leaving.isEmpty() ? st.leaving
+            : (st.direction == directionKey(Direction::ToStock) ? QStringLiteral("caelestia") : QStringLiteral("stock"));
+        p.failure = describeFailure(st);
+    } else {
+        p.failure = QStringLiteral("No switch is recorded, but the system is inconsistent (%1).").arg(reasons.join(QStringLiteral("; ")));
+    }
+    if (failedState && st.failedStep == StepLogout) {
+        p.warnings << QStringLiteral("All steps finished; only the logout call failed. If you just want the switch to complete, "
+                                     "log out and run 'finish' instead of repairing.");
+    }
+
+    SwitchRequest req;
+    req.repair = true;
+    req.cause = p.failure;
+    Side side = Side::Stock;
+    if (leaving == QLatin1String("caelestia")) {
+        req.direction = Direction::ToCaelestia;
+        req.maskPlasmashell = failedState && st.plasmaWasMasked;
+        side = Side::Caelestia;
+    } else {
+        req.direction = Direction::ToStock;
+        if (leaving != QLatin1String("stock")) {
+            p.warnings << QStringLiteral("There is no record of which side was being left, so the system is restored to stock Plasma.");
+        }
+    }
+
+    // The automatic snapshot of step 2, if it is still there; otherwise the newest backup of that side.
+    if (failedState && !st.snapshotRef.isEmpty()) {
+        bool found = false;
+        const QList<BackupInfo> available = listBackups(side, ctx.paths);
+        for (const BackupInfo &b : available) {
+            found = found || b.ref() == st.snapshotRef;
+        }
+        if (found) {
+            req.targetRef = st.snapshotRef;
+        } else {
+            p.warnings << QStringLiteral("The snapshot %1 is no longer available; using the newest %2 backup instead.")
+                              .arg(st.snapshotRef, sideKey(side));
+        }
+    }
+
+    SwitchPlan sp;
+    const OpResult pre = preflight(req, ctx, /*checkState=*/false, &sp);
+    if (!pre.ok) {
+        return fail(pre.error);
+    }
+    p.warnings << sp.warnings;
+    p.alreadyThere = sp.noop;
+    const QString where = shellLabel(side == Side::Stock);
+    if (sp.noop) {
+        p.action = QStringLiteral("The system already matches %1 mode, so there is nothing to undo; only the record of the failed switch is closed.").arg(where);
+    } else if (sp.unitsOnly) {
+        p.action = QStringLiteral("Rolling back to %1 mode (only the plasmashell mask is changed back).").arg(where);
+    } else {
+        p.action = QStringLiteral("Rolling back to %1 mode using backup %2.").arg(where, sp.targetRef);
+    }
+    p.request = req;
+    p.needed = true;
+    return give();
 }
 
 OpResult launchSwitch(const SwitchRequest &req, const SwitchContext &ctx, const QString &exePath)
@@ -533,11 +739,29 @@ OpResult launchSwitch(const SwitchRequest &req, const SwitchContext &ctx, const 
     SwitchState previous;
     const bool hadState = readState(ctx.stateFile, &previous);
     SwitchState st;
+    if (req.repair && hadState) {
+        st = previous;   // keep leaving / plasmaWasMasked / cause for the executor
+        if (st.cause.isEmpty()) {
+            st.cause = describeFailure(previous);
+        }
+    }
+    if (req.repair && !req.cause.isEmpty()) {
+        st.cause = req.cause;
+    }
     st.mode = QStringLiteral("transitioning");
     st.direction = directionKey(req.direction);
     st.targetRef = plan.targetRef;
     st.maskPlasmashell = req.maskPlasmashell;
     st.logout = req.logout;
+    st.step = 0;
+    st.stepName.clear();
+    if (!req.repair) {
+        st.snapshotRef.clear();
+    }
+    st.error.clear();
+    st.result.clear();
+    st.failedStep = 0;
+    st.rolledBack = false;
     QString err;
     if (!writeState(ctx.stateFile, st, &err)) {
         return {false, err, {}};
@@ -557,6 +781,9 @@ OpResult launchSwitch(const SwitchRequest &req, const SwitchContext &ctx, const 
     }
     if (!req.logout) {
         args << QStringLiteral("--no-logout");
+    }
+    if (req.repair) {
+        args << QStringLiteral("--as-repair");
     }
 
     QProcess p;

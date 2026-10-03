@@ -18,8 +18,15 @@ struct SwitchState {
     bool logout = true;
     QStringList helpers;     // helper units this switch disabled
     QString error;
-    QString result;          // "" / done / failed
+    QString result;          // "" / done / failed / rolled-back
     bool unseen = false;     // result not yet shown to the user
+
+    // Recorded so that `repair` can undo a failed or interrupted switch (architecture D20).
+    QString leaving;         // side that was running when the switch started: stock / caelestia / none
+    bool plasmaWasMasked = false;  // plasmashell was masked when the switch started
+    int failedStep = 0;      // step that failed (0 = none recorded)
+    QString cause;           // the original failure, kept while a repair runs and after a rollback
+    bool rolledBack = false; // this state closes a repair: the system went back to the side that was left
 };
 
 // Reads the file; false if it does not exist or is empty.

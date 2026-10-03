@@ -73,6 +73,16 @@ bool readState(const QString &path, SwitchState *out)
             s.result = val;
         } else if (key == QLatin1String("unseen")) {
             s.unseen = toBool(val);
+        } else if (key == QLatin1String("leaving")) {
+            s.leaving = val;
+        } else if (key == QLatin1String("plasmaWasMasked")) {
+            s.plasmaWasMasked = toBool(val);
+        } else if (key == QLatin1String("failedStep")) {
+            s.failedStep = val.toInt();
+        } else if (key == QLatin1String("cause")) {
+            s.cause = val;
+        } else if (key == QLatin1String("rolledBack")) {
+            s.rolledBack = toBool(val);
         }
     }
     if (s.mode.isEmpty()) {
@@ -106,6 +116,11 @@ bool writeState(const QString &path, const SwitchState &s, QString *error)
     out += QStringLiteral("error=%1\n").arg(oneLine(s.error));
     out += QStringLiteral("result=%1\n").arg(s.result);
     out += QStringLiteral("unseen=%1\n").arg(b(s.unseen));
+    out += QStringLiteral("leaving=%1\n").arg(s.leaving);
+    out += QStringLiteral("plasmaWasMasked=%1\n").arg(b(s.plasmaWasMasked));
+    out += QStringLiteral("failedStep=%1\n").arg(s.failedStep);
+    out += QStringLiteral("cause=%1\n").arg(oneLine(s.cause));
+    out += QStringLiteral("rolledBack=%1\n").arg(b(s.rolledBack));
     f.write(out.toUtf8());
     if (!f.commit()) {
         if (error) {

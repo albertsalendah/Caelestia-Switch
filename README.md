@@ -2,7 +2,7 @@
 
 A standalone app to switch between stock KDE Plasma (`plasmashell`) and Caelestia KDE without uninstalling either. It works with an unmodified `ladybug-me/caelestia-kde` install, and later with a custom fork.
 
-**Status:** Phase A1 in progress. `caelestia-switch status [--json]` reads the system (read-only); all other commands are not implemented yet.
+**Status:** Phase A3 in progress. Implemented: `status [--json]`, `backup`, `backups`, `restore`, `on`, `off`, `finish`, `repair`. Not implemented yet: `install`, `update`, `uninstall`, and the GUI beyond a stub window.
 
 ## Layout
 
