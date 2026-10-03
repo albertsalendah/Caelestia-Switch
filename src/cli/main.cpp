@@ -70,6 +70,7 @@ int followSwitch(const QString &stateFile)
                 out << "FAILED: " << st.error << '\n';
                 if (st.rolledBack || !st.cause.isEmpty()) {
                     out << "The failure that started this repair: " << st.cause << '\n';
+                    out << "Fix the cause, then run 'repair' again.\n";
                 }
                 return 1;
             }
@@ -158,6 +159,7 @@ int cmdRepair(const QCommandLineParser &parser)
     }
     out << "Repair started in the background (unit caelestia-switch-run). "
            "It logs out at the end; after logging in, run 'finish'. The log is ~/.local/share/caelestia-switch/switch.log\n";
+    out.flush();
     return parser.isSet(QStringLiteral("wait")) ? followSwitch(ctx.stateFile) : 0;
 }
 

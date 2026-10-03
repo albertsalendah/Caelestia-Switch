@@ -241,6 +241,12 @@ OpResult preflight(const SwitchRequest &req, const SwitchContext &ctx, bool chec
         p.noop = true;
         p.message = QStringLiteral("already in Caelestia mode");
     }
+    if (p.noop && req.repair && req.configMayBeTouched) {
+        // The readings look right (for example plasmashell runs with the stock ShellPackage) but the failed
+        // switch had started rewriting config: the snapshot still has to be restored.
+        p.noop = false;
+        p.message.clear();
+    }
     if (p.noop) {
         if (plan) {
             *plan = p;
@@ -367,9 +373,16 @@ SwitchOutcome runSwitch(const SwitchRequest &req, const SwitchContext &ctx)
             // without a shell (the black desktop seen in the manual round trips): start the one being restored.
             const QString unit = toStock ? kPlasmashellUnit : kCaelestiaUnit;
             QString e;
-            msg += ctx.ops->systemctl({QStringLiteral("start"), unit}, &e)
-                ? QStringLiteral(" (started %1 so the session is not left without a shell; run 'repair' again)").arg(unit)
-                : QStringLiteral(" (could not start %1 either: %2)").arg(unit, e);
+            if (ctx.ops->systemctl({QStringLiteral("start"), unit}, &e)) {
+                msg += QStringLiteral(" (started %1 so the session is not left without a shell; run 'repair' again)").arg(unit);
+            } else if (e.contains(QLatin1String("timed out"))) {
+                // systemctl start waits until the service reports ready; a shell waiting on an error dialog never does.
+                // The job stays queued in systemd, so the shell is usually coming up anyway.
+                msg += QStringLiteral(" (asked systemd to start %1, but it had not finished starting when the wait ended; "
+                                      "a shell waiting on an error dialog does this. Fix the cause, then run 'repair' again)").arg(unit);
+            } else {
+                msg += QStringLiteral(" (could not start %1 either: %2)").arg(unit, e);
+            }
         }
         st.error = msg;
         st.result = QStringLiteral("failed");
@@ -498,7 +511,8 @@ SwitchOutcome runSwitch(const SwitchRequest &req, const SwitchContext &ctx)
     } else {
         const OpResult rest = restoreBackup(plan.targetRef, ctx.paths);
         if (!rest.ok) {
-            return fail(StepRestore, QStringLiteral("restore of %1 failed: %2 %3").arg(plan.targetRef, rest.error, rest.warnings.join(QStringLiteral("; "))));
+            const QString detail = rest.warnings.isEmpty() ? rest.error : rest.warnings.join(QStringLiteral("; "));
+            return fail(StepRestore, QStringLiteral("restore of %1 failed: %2").arg(plan.targetRef, detail));
         }
         out.warnings << rest.warnings;
         done(StepRestore, QStringLiteral("restored %1").arg(plan.targetRef));
@@ -689,6 +703,11 @@ OpResult planRepair(const SwitchContext &ctx, RepairPlan *out)
             p.warnings << QStringLiteral("There is no record of which side was being left, so the system is restored to stock Plasma.");
         }
     }
+
+    // The switch may have rewritten config if it got as far as the restore step, or if this record already
+    // belongs to an earlier repair (its progress was reset). Only meaningful when there is a snapshot to restore.
+    req.configMayBeTouched = failedState && !st.snapshotRef.isEmpty()
+        && (st.step >= StepHelpers || st.failedStep >= StepRestore || !st.cause.isEmpty());
 
     // The automatic snapshot of step 2, if it is still there; otherwise the newest backup of that side.
     if (failedState && !st.snapshotRef.isEmpty()) {

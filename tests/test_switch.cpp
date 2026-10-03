@@ -85,6 +85,7 @@ public:
     QMap<QString, QStringList> deps;
     QStringList commands;
     QStringList failOn;      // exact "systemctl ..." strings that fail
+    QString failSuffix = QStringLiteral(" failed");   // appended to the command to form the error text
     bool gracefulOk = true;
     bool logoutOk = true;
 
@@ -105,7 +106,7 @@ public:
         commands << cmd;
         if (failOn.contains(cmd)) {
             if (error) {
-                *error = cmd + QStringLiteral(" failed");
+                *error = cmd + failSuffix;
             }
             return false;
         }
@@ -249,6 +250,8 @@ private slots:
     void repairRefusals();
     void repairUndoesMaskOnlyChange();
     void repairFailureStartsTheShell();
+    void repairDoesNotTrustReadingsAfterPartialRestore();
+    void repairSafetyNetTimeout();
 };
 
 void TestSwitch::stateRoundTrip()
@@ -1000,6 +1003,87 @@ void TestSwitch::repairFailureStartsTheShell()
     QCOMPARE(again.request.targetRef, failed.snapshotRef);
     QVERIFY2(runSwitch(again.request, e.ctx).ok, "second repair");
     QVERIFY(e.state().rolledBack);
+}
+
+void TestSwitch::repairDoesNotTrustReadingsAfterPartialRestore()
+{
+    // Live finding 2026-10-04: a switch failed in the config restore (step 5) after replacing some files, then
+    // plasmashell was running with the stock ShellPackage, so the readings said "stock" while the config was
+    // half Caelestia's. The snapshot must still be restored, also on a later repair of a failed repair.
+    Env e;
+    e.setShellPackage(QString());
+    writeFile(e.cfg("kscreenlockerrc"), QStringLiteral("[Greeter]\nTheme=stock\n"));
+    const QString stockRef = e.backup(Side::Stock);
+    writeFile(e.cfg("kscreenlockerrc"), QStringLiteral("[Greeter]\nTheme=half\n"));   // replaced before the failure
+    FakeOps ops(stockMode(), e.configHome());                                            // plasmashell runs, stock package
+    e.ctx.ops = &ops;
+
+    SwitchState st;
+    st.mode = QStringLiteral("transitioning");
+    st.direction = QStringLiteral("to-caelestia");
+    st.step = 4;
+    st.leaving = QStringLiteral("stock");
+    st.snapshotRef = stockRef;
+    st.error = QStringLiteral("restore failed: cannot restore plasmashellrc");
+    st.result = QStringLiteral("failed");
+    st.failedStep = StepRestore;
+    QVERIFY(writeState(e.ctx.stateFile, st));
+
+    RepairPlan plan;
+    QVERIFY(planRepair(e.ctx, &plan).ok);
+    QVERIFY(plan.needed);
+    QVERIFY(!plan.alreadyThere);                                       // not trusted: the config may be half-restored
+    QVERIFY(plan.request.configMayBeTouched);
+    QCOMPARE(plan.request.targetRef, stockRef);
+    QVERIFY2(runSwitch(plan.request, e.ctx).ok, "rollback");
+    QVERIFY(readFileText(e.cfg("kscreenlockerrc")).contains(QStringLiteral("Theme=stock")));
+    QVERIFY(ops.indexOf(QStringLiteral("systemctl stop plasma-plasmashell.service")) >= 0);
+
+    // A failure that happened before the restore step changed nothing, so the same readings do mean "nothing to undo".
+    Env e2;
+    e2.setShellPackage(QString());
+    const QString ref2 = e2.backup(Side::Stock);
+    FakeOps ops2(stockMode(), e2.configHome());
+    e2.ctx.ops = &ops2;
+    SwitchState early;
+    early.mode = QStringLiteral("transitioning");
+    early.direction = QStringLiteral("to-caelestia");
+    early.step = 2;
+    early.leaving = QStringLiteral("stock");
+    early.snapshotRef = ref2;
+    early.error = QStringLiteral("could not stop plasmashell");
+    early.result = QStringLiteral("failed");
+    early.failedStep = StepStopOutgoing;
+    QVERIFY(writeState(e2.ctx.stateFile, early));
+    RepairPlan plan2;
+    QVERIFY(planRepair(e2.ctx, &plan2).ok);
+    QVERIFY(plan2.alreadyThere && !plan2.request.configMayBeTouched);
+
+    // But once a repair has been attempted (cause recorded), progress was reset, so it is not trusted either.
+    early.cause = QStringLiteral("The last switch to Caelestia failed at step 3 (stopping the outgoing shell): x");
+    early.step = 0;
+    QVERIFY(writeState(e2.ctx.stateFile, early));
+    RepairPlan plan3;
+    QVERIFY(planRepair(e2.ctx, &plan3).ok);
+    QVERIFY(!plan3.alreadyThere && plan3.request.configMayBeTouched);
+}
+
+void TestSwitch::repairSafetyNetTimeout()
+{
+    // `systemctl start` timing out (the shell waits on an error dialog) must not be reported as "could not start".
+    Env e;
+    makeFailedToStock(e);
+    FakeOps fixer(halfSwitched(), e.configHome());
+    fixer.failSuffix = QStringLiteral(": systemctl timed out");
+    fixer.failOn << QStringLiteral("systemctl enable caelestia-shell.service")
+                 << QStringLiteral("systemctl start caelestia-shell.service");
+    e.ctx.ops = &fixer;
+    RepairPlan plan;
+    QVERIFY(planRepair(e.ctx, &plan).ok);
+    const SwitchOutcome out = runSwitch(plan.request, e.ctx);
+    QVERIFY(!out.ok);
+    QVERIFY2(out.error.contains(QStringLiteral("asked systemd to start caelestia-shell.service")), qPrintable(out.error));
+    QVERIFY(!out.error.contains(QStringLiteral("could not start")));
 }
 
 QTEST_GUILESS_MAIN(TestSwitch)

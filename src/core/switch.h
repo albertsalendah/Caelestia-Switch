@@ -22,6 +22,8 @@ struct SwitchRequest {
     bool logout = true;                 // false: stop just before the logout (live testing)
     bool repair = false;                // a rollback built by planRepair: skips the checks a half-switched system fails
     QString cause;                      // repair only: the original failure, stored in the state file
+    bool configMayBeTouched = false;    // repair only: the failed switch may already have rewritten config, so the
+                                        // rollback must restore the snapshot even if the readings already look right
 };
 
 // Everything the switch needs; a struct so tests can use a fake system and fake paths.
