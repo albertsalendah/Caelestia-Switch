@@ -744,6 +744,27 @@ OpResult planRepair(const SwitchContext &ctx, RepairPlan *out)
     return give();
 }
 
+QStringList runSwitchArguments(const SwitchRequest &req)
+{
+    QStringList args{QStringLiteral("run-switch"), QStringLiteral("--direction"), directionKey(req.direction)};
+    if (!req.targetRef.isEmpty()) {
+        args << QStringLiteral("--backup") << req.targetRef;
+    }
+    if (req.maskPlasmashell) {
+        args << QStringLiteral("--mask");
+    }
+    if (!req.logout) {
+        args << QStringLiteral("--no-logout");
+    }
+    if (req.repair) {
+        args << QStringLiteral("--as-repair");
+        if (req.configMayBeTouched) {
+            args << QStringLiteral("--config-touched");   // without it the executor trusts the readings (found live 2026-10-04)
+        }
+    }
+    return args;
+}
+
 OpResult launchSwitch(const SwitchRequest &req, const SwitchContext &ctx, const QString &exePath)
 {
     SwitchPlan plan;
@@ -791,19 +812,7 @@ OpResult launchSwitch(const SwitchRequest &req, const SwitchContext &ctx, const 
     if (qEnvironmentVariableIsSet("WAYLAND_DISPLAY")) {
         args << QStringLiteral("--setenv=WAYLAND_DISPLAY");
     }
-    args << exePath << QStringLiteral("run-switch") << QStringLiteral("--direction") << directionKey(req.direction);
-    if (!req.targetRef.isEmpty()) {
-        args << QStringLiteral("--backup") << req.targetRef;
-    }
-    if (req.maskPlasmashell) {
-        args << QStringLiteral("--mask");
-    }
-    if (!req.logout) {
-        args << QStringLiteral("--no-logout");
-    }
-    if (req.repair) {
-        args << QStringLiteral("--as-repair");
-    }
+    args << exePath << runSwitchArguments(req);
 
     QProcess p;
     p.start(QStringLiteral("systemd-run"), args);

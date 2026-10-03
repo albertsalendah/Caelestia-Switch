@@ -50,6 +50,7 @@ cs::SwitchRequest makeRequest(cs::Direction dir, const QCommandLineParser &parse
     req.maskPlasmashell = dir == cs::Direction::ToCaelestia && parser.isSet(QStringLiteral("mask"));
     req.logout = !parser.isSet(QStringLiteral("no-logout"));
     req.repair = parser.isSet(QStringLiteral("as-repair"));   // run-switch started by `repair`; the cause is in the state file
+    req.configMayBeTouched = req.repair && parser.isSet(QStringLiteral("config-touched"));
     return req;
 }
 
@@ -292,6 +293,7 @@ int main(int argc, char *argv[])
     parser.addOption(QCommandLineOption(QStringLiteral("wait"), QStringLiteral("on/off/repair: follow the progress until the logout.")));
     parser.addOption(QCommandLineOption(QStringLiteral("direction"), QStringLiteral("run-switch (internal): to-stock or to-caelestia."), QStringLiteral("dir")));
     parser.addOption(QCommandLineOption(QStringLiteral("as-repair"), QStringLiteral("run-switch (internal): this run is a repair.")));
+    parser.addOption(QCommandLineOption(QStringLiteral("config-touched"), QStringLiteral("run-switch (internal): the switch being repaired may have rewritten config.")));
     parser.addOption(QCommandLineOption(QStringLiteral("timeout"), QStringLiteral("finish: seconds to wait for the final state (default 60)."), QStringLiteral("seconds")));
     parser.addPositionalArgument(QStringLiteral("command"), QStringLiteral("Command to run."));
     parser.process(app);

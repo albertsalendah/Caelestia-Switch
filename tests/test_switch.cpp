@@ -252,6 +252,7 @@ private slots:
     void repairFailureStartsTheShell();
     void repairDoesNotTrustReadingsAfterPartialRestore();
     void repairSafetyNetTimeout();
+    void executorArgumentsCarryEveryFlag();
 };
 
 void TestSwitch::stateRoundTrip()
@@ -1084,6 +1085,32 @@ void TestSwitch::repairSafetyNetTimeout()
     QVERIFY(!out.ok);
     QVERIFY2(out.error.contains(QStringLiteral("asked systemd to start caelestia-shell.service")), qPrintable(out.error));
     QVERIFY(!out.error.contains(QStringLiteral("could not start")));
+}
+
+void TestSwitch::executorArgumentsCarryEveryFlag()
+{
+    // Live finding 2026-10-04: the executor runs as a separate process and rebuilds its request from these
+    // arguments. `configMayBeTouched` was missing, so the first fixed build still closed the record as a no-op.
+    SwitchRequest repair;
+    repair.direction = Direction::ToStock;
+    repair.targetRef = QStringLiteral("stock/20261004_071518");
+    repair.logout = false;
+    repair.repair = true;
+    repair.configMayBeTouched = true;
+    const QStringList a = runSwitchArguments(repair);
+    QCOMPARE(a.first(), QStringLiteral("run-switch"));
+    QVERIFY(a.contains(QStringLiteral("--as-repair")));
+    QVERIFY(a.contains(QStringLiteral("--config-touched")));
+    QVERIFY(a.contains(QStringLiteral("--no-logout")));
+    QVERIFY(a.indexOf(QStringLiteral("--backup")) >= 0 && a.at(a.indexOf(QStringLiteral("--backup")) + 1) == QLatin1String("stock/20261004_071518"));
+    QVERIFY(a.indexOf(QStringLiteral("--direction")) >= 0 && a.at(a.indexOf(QStringLiteral("--direction")) + 1) == QLatin1String("to-stock"));
+
+    SwitchRequest normal;
+    normal.direction = Direction::ToCaelestia;
+    normal.maskPlasmashell = true;
+    const QStringList b = runSwitchArguments(normal);
+    QVERIFY(b.contains(QStringLiteral("--mask")));
+    QVERIFY(!b.contains(QStringLiteral("--as-repair")) && !b.contains(QStringLiteral("--config-touched")) && !b.contains(QStringLiteral("--no-logout")));
 }
 
 QTEST_GUILESS_MAIN(TestSwitch)

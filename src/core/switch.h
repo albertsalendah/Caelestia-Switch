@@ -108,6 +108,11 @@ struct RepairPlan {
 // No usable state file: fall back to restoring stock Plasma (spec).
 OpResult planRepair(const SwitchContext &ctx, RepairPlan *plan);
 
+// The arguments of `caelestia-switch run-switch` that launchSwitch hands to the executor process. The executor
+// rebuilds its SwitchRequest from them (src/cli/main.cpp makeRequest), so every field that matters must be here;
+// a test pins this down because a missing flag silently changes what the executor does.
+QStringList runSwitchArguments(const SwitchRequest &req);
+
 // Marks the state "transitioning", then starts runSwitch in a transient user service
 // (own cgroup, so stopping either shell cannot kill it). `exePath` is this binary.
 OpResult launchSwitch(const SwitchRequest &req, const SwitchContext &ctx, const QString &exePath);
