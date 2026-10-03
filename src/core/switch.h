@@ -36,6 +36,8 @@ struct SwitchPlan {
     Side target = Side::Stock;
     QString targetRef;
     bool noop = false;                  // already in the requested mode
+    bool unitsOnly = false;             // Caelestia is already running and only the plasmashell mask changes
+    bool snapshot = true;               // take an automatic snapshot of `leaving` (false: nothing to snapshot)
     QString message;
     QStringList warnings;               // non-blocking notes (e.g. weak dependents of plasmashell)
 };

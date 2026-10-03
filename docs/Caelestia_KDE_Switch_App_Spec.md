@@ -47,7 +47,7 @@ Shows: plasmashell status, the source of the installed Caelestia, and its versio
 |---|---|---|
 | To plasmashell | (no effect) | Unmask plasmashell if masked. Stop and **disable** Caelestia (always, so two UIs never appear). Stop helper units if safe. Restore the selected stock backup. |
 | To Caelestia | checked ("also disable plasmashell") | Start Caelestia, restore the selected Caelestia backup, run the live dependency pre-flight, then stop and **mask** plasmashell. Start helper units. |
-| To Caelestia | unchecked | Start Caelestia, restore the selected Caelestia backup. Leave plasmashell running headless (upstream's default state); if plasmashell is masked or not running, unmask and start it. Start helper units. |
+| To Caelestia | unchecked | Start Caelestia, restore the selected Caelestia backup. Leave plasmashell running headless (upstream's default state); if plasmashell is masked or not running, unmask and start it. Start helper units. (If Caelestia is already running, only the mask changes: see "Mask-only change" below.) |
 
 So the checkbox only appears/has an effect when switching to Caelestia.
 
@@ -56,6 +56,7 @@ Additional rules:
 - **Quit Caelestia gracefully, not with a plain `systemctl stop`** (checked 2026-10-01; architecture D18): a plain stop leaves its stolen shortcuts and screen corner in place, which is the Test 14 breakage.
 - **Stop Caelestia before resetting `ShellPackage`.** Caelestia's startup wrapper (`~/.local/bin/caelestia-autostart.sh`) rewrites it to `caelestia.desktop`.
 - **Pre-flight before masking plasmashell**, live, every time (architecture D1, amended 2026-10-02): `RequiredBy`, `RequisiteOf` and `BoundBy` of `plasma-plasmashell.service` must be empty, otherwise the app refuses to mask; `WantedBy` (a weak link, always `plasma-core.target` in a live session) only produces a warning that names the units. The GUI runs the same check when the window loads: strong dependent = checkbox greyed out with the reason; weak only = warning and a "proceed?" question.
+- **Mask-only change (decided 2026-10-03):** if Caelestia is already the running shell and `on` only changes the plasmashell mask (`on --mask`, or `on` to unmask), the switch does the unit changes and the logout and nothing else: no snapshot (it would file the live Caelestia config under the wrong side), no config restore (restoring into the running Caelestia is untested and unsafe), no shell stopped, no target backup needed. `--backup` is refused in this case instead of being ignored.
 - **Helper units** (`cliphist.service`, the update-checker timer/service): stop them with Caelestia only if a live check shows nothing depends on them; otherwise leave them running. The KWin workspace-tracker effect is not a process and is left alone.
 
 ## Order of operations for a switch
@@ -63,8 +64,8 @@ Additional rules:
 1. Show the warning dialog: applications will be closed by the logout, save your work. Do not force-kill applications.
 2. Write the state file: `transitioning`, step 0.
 3. Check the app's own cgroup; if it sits inside a shell's service, re-execute it in its own systemd scope. (It does not when launched from Caelestia's launcher, checked 2026-09-30; not yet checked from stock Plasma's launcher.)
-4. Snapshot the mode being left (automatic backup).
-5. Stop the outgoing shell and, where safe, its helper units. Caelestia is quit **gracefully** (`quickshell kill -i <id>`, with the session's `WAYLAND_DISPLAY` set), not with a plain `systemctl stop`, so it releases its stolen shortcuts and screen corner; then the KWin Overview effect is reloaded (architecture D18).
+4. Snapshot the mode being left (automatic backup). The side is the one actually running (Caelestia if it provides the bar, stock if plasmashell draws the panels), not the one implied by the direction; if neither shell draws panels no snapshot is taken and none is guessed.
+5. Stop the outgoing shell and, where safe, its helper units (skipped when Caelestia already runs and only the plasmashell mask changes, see the rule below). Caelestia is quit **gracefully** (`quickshell kill -i <id>`, with the session's `WAYLAND_DISPLAY` set), not with a plain `systemctl stop`, so it releases its stolen shortcuts and screen corner; then the KWin Overview effect is reloaded (architecture D18).
 6. Restore the selected backup (config files) — after the outgoing shell has stopped, because plasmashell may rewrite its config on exit. *Unverified; checked in the Phase A2/A3 round trips.*
 7. Apply unit changes (mask/unmask, enable/disable, start/stop) per the rules above.
 8. Verify internally with the same readings; only continue if they match the expected state.

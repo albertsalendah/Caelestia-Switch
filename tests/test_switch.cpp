@@ -203,6 +203,9 @@ private slots:
     void noLogoutOption();
     void toCaelestiaWithMask();
     void toCaelestiaUnmasksPlasmashell();
+    void maskChangeInCaelestiaModeOnlyChangesUnits();
+    void maskChangeRefusesBackupRef();
+    void noShellRunningSkipsSnapshot();
     void noopCases();
     void preflightRejections();
     void maskRefusedWithDependents();
@@ -348,9 +351,9 @@ void TestSwitch::toCaelestiaWithMask()
 void TestSwitch::toCaelestiaUnmasksPlasmashell()
 {
     // Caelestia mode with plasmashell masked; "on" without the checkbox unmasks it. Not a no-op.
+    // Only the unit changes: no backup is needed, nothing is snapshotted or restored, no shell is stopped.
     Env e;
     e.setShellPackage(QStringLiteral("caelestia.desktop"));
-    e.backup(Side::Caelestia);
     FakeOps ops(caelestiaMode(/*plasmaMasked=*/true), e.configHome());
     e.ctx.ops = &ops;
 
@@ -360,6 +363,92 @@ void TestSwitch::toCaelestiaUnmasksPlasmashell()
     QVERIFY2(out.ok && !out.noop, qPrintable(out.error));
     QVERIFY(ops.indexOf(QStringLiteral("systemctl unmask plasma-plasmashell.service")) >= 0);
     QVERIFY(ops.indexOf(QStringLiteral("systemctl stop plasma-plasmashell.service")) < 0);  // was not running
+    QVERIFY(ops.indexOf(QStringLiteral("quit-caelestia")) < 0);
+    QCOMPARE(listBackups(e.ctx.paths).size(), 0);
+}
+
+void TestSwitch::maskChangeInCaelestiaModeOnlyChangesUnits()
+{
+    // Already in Caelestia mode (plasmashell headless), "on --mask" must not snapshot a side that
+    // is not the one running, must not restore config into the live shell, and must not stop anything.
+    Env e;
+    e.setShellPackage(QStringLiteral("caelestia.desktop"));
+    writeFile(e.cfg("kscreenlockerrc"), QStringLiteral("[Greeter]\nTheme=live\n"));
+    FakeOps ops(caelestiaMode(), e.configHome());
+    e.ctx.ops = &ops;
+
+    SwitchRequest req;
+    req.direction = Direction::ToCaelestia;
+    req.maskPlasmashell = true;
+    const SwitchOutcome out = runSwitch(req, e.ctx);
+    QVERIFY2(out.ok && !out.noop, qPrintable(out.error));
+
+    QVERIFY(ops.indexOf(QStringLiteral("systemctl mask plasma-plasmashell.service")) >= 0);
+    QVERIFY(ops.indexOf(QStringLiteral("quit-caelestia")) < 0);
+    QVERIFY(ops.indexOf(QStringLiteral("systemctl stop plasma-plasmashell.service")) < 0);
+    QVERIFY(ops.indexOf(QStringLiteral("systemctl stop caelestia-shell.service")) < 0);
+    QCOMPARE(ops.indexOf(QStringLiteral("logout")), ops.commands.size() - 1);   // the logout stays
+    QCOMPARE(listBackups(e.ctx.paths).size(), 0);                                // no snapshot of either side
+    QVERIFY(readFileText(e.cfg("kscreenlockerrc")).contains(QStringLiteral("Theme=live")));   // config untouched
+
+    const SwitchState st = e.state();
+    QCOMPARE(st.mode, QStringLiteral("pending-logout"));
+    QCOMPARE(st.step, int(StepLogout));
+    QVERIFY(st.targetRef.isEmpty());
+    QVERIFY(st.snapshotRef.isEmpty());
+    QVERIFY(st.maskPlasmashell);
+}
+
+void TestSwitch::maskChangeRefusesBackupRef()
+{
+    // A backup cannot be restored into the running Caelestia, so asking for one is refused, not ignored.
+    Env e;
+    e.setShellPackage(QStringLiteral("caelestia.desktop"));
+    const QString ref = e.backup(Side::Caelestia);
+    FakeOps ops(caelestiaMode(), e.configHome());
+    e.ctx.ops = &ops;
+
+    SwitchRequest req;
+    req.direction = Direction::ToCaelestia;
+    req.maskPlasmashell = true;
+    req.targetRef = ref;
+    SwitchPlan plan;
+    const OpResult r = preflight(req, e.ctx, true, &plan);
+    QVERIFY(!r.ok);
+    QVERIFY(r.error.contains(QStringLiteral("no effect")));
+    QVERIFY(ops.commands.isEmpty());
+}
+
+void TestSwitch::noShellRunningSkipsSnapshot()
+{
+    // Caelestia disabled, plasmashell headless: neither shell draws panels (provider none), so
+    // there is no side to snapshot and none is guessed. The switch itself still works.
+    Env e;
+    e.setShellPackage(QString());
+    e.backup(Side::Stock);
+    e.setShellPackage(QStringLiteral("caelestia.desktop"));
+    Readings r;
+    r.systemdReachable = true;
+    r.caelestiaUnit = unit("loaded", "inactive", "dead", "disabled");
+    r.plasmashellUnit = unit("loaded", "active", "running", "static");
+    r.plasmashellRunning = true;
+    r.shellPackage = QStringLiteral("caelestia.desktop");
+    r.install.installed = true;
+    r = finish(r);
+    QCOMPARE(r.provider, Provider::None);
+    QVERIFY(!r.inconsistent());
+    FakeOps ops(r, e.configHome());
+    e.ctx.ops = &ops;
+
+    SwitchRequest req;
+    req.direction = Direction::ToStock;
+    const SwitchOutcome out = runSwitch(req, e.ctx);
+    QVERIFY2(out.ok, qPrintable(out.error));
+    QCOMPARE(listBackups(Side::Caelestia, e.ctx.paths).size(), 0);
+    QCOMPARE(listBackups(Side::Stock, e.ctx.paths).size(), 1);        // only the one made above
+    QVERIFY(e.state().snapshotRef.isEmpty());
+    QVERIFY(out.warnings.join(QLatin1Char(';')).contains(QStringLiteral("snapshot")));
+    QVERIFY(isStockShellPackage(readShellPackage(e.configHome())));   // the restore still happened
 }
 
 void TestSwitch::noopCases()
@@ -379,8 +468,9 @@ void TestSwitch::noopCases()
     toCae.direction = Direction::ToCaelestia;
     QVERIFY(preflight(toCae, e.ctx, true, &plan).ok);
     QVERIFY(plan.noop);
-    toCae.maskPlasmashell = true;   // different mask request: not a no-op (needs a backup, so it fails here)
-    QVERIFY(!preflight(toCae, e.ctx, true, &plan).ok);
+    toCae.maskPlasmashell = true;   // different mask request: not a no-op, but only the units change (no backup needed)
+    QVERIFY(preflight(toCae, e.ctx, true, &plan).ok);
+    QVERIFY(!plan.noop && plan.unitsOnly);
 
     // runSwitch on a no-op settles the state file and changes nothing.
     toCae.maskPlasmashell = false;

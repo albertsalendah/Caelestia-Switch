@@ -153,7 +153,6 @@ OpResult preflight(const SwitchRequest &req, const SwitchContext &ctx, bool chec
 {
     SwitchPlan p;
     const bool toStock = req.direction == Direction::ToStock;
-    p.leaving = toStock ? Side::Caelestia : Side::Stock;
     p.target = toStock ? Side::Stock : Side::Caelestia;
     const auto fail = [](const QString &why) { return OpResult{false, why, {}}; };
 
@@ -192,22 +191,47 @@ OpResult preflight(const SwitchRequest &req, const SwitchContext &ctx, bool chec
         return fail(QStringLiteral("Caelestia is not installed"));
     }
 
-    // Target backup: the one asked for, else the newest of the target side.
-    const QList<BackupInfo> available = listBackups(p.target, ctx.paths);
-    if (req.targetRef.isEmpty()) {
-        if (available.isEmpty()) {
-            return fail(QStringLiteral("no %1-side backup exists; create one with 'backup --side %1'").arg(sideKey(p.target)));
-        }
-        p.targetRef = available.first().ref();
+    // The side being left is the one that is actually running, not the one implied by the direction:
+    // snapshotting the wrong side would store the live config under the wrong name. With neither
+    // shell drawing panels (provider none) there is no side to snapshot, and none is guessed.
+    if (r.provider == Provider::Caelestia) {
+        p.leaving = Side::Caelestia;
+    } else if (r.provider == Provider::Plasma) {
+        p.leaving = Side::Stock;
     } else {
-        bool found = false;
-        for (const BackupInfo &b : available) {
-            found = found || b.ref() == req.targetRef;
+        p.snapshot = false;
+        p.warnings << QStringLiteral("neither shell was providing panels, so no snapshot of the side being left was taken");
+    }
+
+    // Not a no-op and Caelestia already runs: only the plasmashell mask differs. Nothing is stopped,
+    // snapshotted or restored (restoring config into the running Caelestia is untested and unsafe).
+    p.unitsOnly = !toStock && r.provider == Provider::Caelestia;
+    if (p.unitsOnly) {
+        p.snapshot = false;
+        if (!req.targetRef.isEmpty()) {
+            return fail(QStringLiteral("Caelestia is already running, so a backup would not be restored and has no effect here; "
+                                       "leave out --backup, or switch to stock first"));
         }
-        if (!found) {
-            return fail(QStringLiteral("backup '%1' not found on the %2 side").arg(req.targetRef, sideKey(p.target)));
+    }
+
+    // Target backup: the one asked for, else the newest of the target side (not needed when only the units change).
+    if (!p.unitsOnly) {
+        const QList<BackupInfo> available = listBackups(p.target, ctx.paths);
+        if (req.targetRef.isEmpty()) {
+            if (available.isEmpty()) {
+                return fail(QStringLiteral("no %1-side backup exists; create one with 'backup --side %1'").arg(sideKey(p.target)));
+            }
+            p.targetRef = available.first().ref();
+        } else {
+            bool found = false;
+            for (const BackupInfo &b : available) {
+                found = found || b.ref() == req.targetRef;
+            }
+            if (!found) {
+                return fail(QStringLiteral("backup '%1' not found on the %2 side").arg(req.targetRef, sideKey(p.target)));
+            }
+            p.targetRef = req.targetRef;
         }
-        p.targetRef = req.targetRef;
     }
 
     // D1: live dependency check before masking plasmashell (strong dependents block, weak ones only warn).
@@ -290,30 +314,40 @@ SwitchOutcome runSwitch(const SwitchRequest &req, const SwitchContext &ctx)
     done(StepPreflight, QStringLiteral("pre-flight"));
 
     // 2. Automatic snapshot of the mode being left.
-    QString snapRef;
-    const OpResult snap = createBackup(plan.leaving, QStringLiteral("auto-leave"), ctx.paths, &snapRef);
-    if (!snap.ok) {
-        return fail(StepSnapshot, QStringLiteral("snapshot failed: %1").arg(snap.error));
+    if (plan.snapshot) {
+        QString snapRef;
+        const OpResult snap = createBackup(plan.leaving, QStringLiteral("auto-leave"), ctx.paths, &snapRef);
+        if (!snap.ok) {
+            return fail(StepSnapshot, QStringLiteral("snapshot failed: %1").arg(snap.error));
+        }
+        st.snapshotRef = snapRef;
+        done(StepSnapshot, QStringLiteral("snapshot %1").arg(snapRef));
+    } else {
+        done(StepSnapshot, plan.unitsOnly ? QStringLiteral("no snapshot (only the mask changes)")
+                                          : QStringLiteral("no snapshot (no shell was providing panels)"));
     }
-    st.snapshotRef = snapRef;
-    done(StepSnapshot, QStringLiteral("snapshot %1").arg(snapRef));
 
     // 3. Stop the outgoing shell (config must only be written after it has stopped).
     // Both shells are stopped in both directions: a running plasmashell (even headless) may
     // rewrite its config on exit and clobber the restore (D13).
     QString err;
-    if (toStock) {
-        if (!ctx.ops->stopCaelestiaGracefully(&out.warnings, &err)) {
-            return fail(StepStopOutgoing, QStringLiteral("could not stop Caelestia: %1").arg(err));
+    if (plan.unitsOnly) {
+        // Caelestia keeps running and no config is written, so nothing needs to stop before the logout.
+        done(StepStopOutgoing, QStringLiteral("no shell stopped (only the mask changes)"));
+    } else {
+        if (toStock) {
+            if (!ctx.ops->stopCaelestiaGracefully(&out.warnings, &err)) {
+                return fail(StepStopOutgoing, QStringLiteral("could not stop Caelestia: %1").arg(err));
+            }
+            ctx.ops->reloadOverviewEffect(&out.warnings);
         }
-        ctx.ops->reloadOverviewEffect(&out.warnings);
-    }
-    if (before.plasmashellRunning || ctx.ops->unitState(kPlasmashellUnit).active()) {
-        if (!ctx.ops->systemctl({QStringLiteral("stop"), kPlasmashellUnit}, &err) || !ctx.ops->waitInactive(kPlasmashellUnit, 15000)) {
-            return fail(StepStopOutgoing, QStringLiteral("could not stop plasmashell: %1").arg(err));
+        if (before.plasmashellRunning || ctx.ops->unitState(kPlasmashellUnit).active()) {
+            if (!ctx.ops->systemctl({QStringLiteral("stop"), kPlasmashellUnit}, &err) || !ctx.ops->waitInactive(kPlasmashellUnit, 15000)) {
+                return fail(StepStopOutgoing, QStringLiteral("could not stop plasmashell: %1").arg(err));
+            }
         }
+        done(StepStopOutgoing, toStock ? QStringLiteral("Caelestia quit, plasmashell stopped") : QStringLiteral("plasmashell stopped"));
     }
-    done(StepStopOutgoing, toStock ? QStringLiteral("Caelestia quit, plasmashell stopped") : QStringLiteral("plasmashell stopped"));
 
     // 4. Helper units (best effort: problems are warnings).
     QStringList disabledNow;
@@ -352,13 +386,17 @@ SwitchOutcome runSwitch(const SwitchRequest &req, const SwitchContext &ctx)
     }
     done(StepHelpers, QStringLiteral("helper units"));
 
-    // 5. Restore the selected backup.
-    const OpResult rest = restoreBackup(plan.targetRef, ctx.paths);
-    if (!rest.ok) {
-        return fail(StepRestore, QStringLiteral("restore of %1 failed: %2 %3").arg(plan.targetRef, rest.error, rest.warnings.join(QStringLiteral("; "))));
+    // 5. Restore the selected backup (not when only the units change: Caelestia is running, nothing to restore).
+    if (plan.unitsOnly) {
+        done(StepRestore, QStringLiteral("no config restore (only the mask changes)"));
+    } else {
+        const OpResult rest = restoreBackup(plan.targetRef, ctx.paths);
+        if (!rest.ok) {
+            return fail(StepRestore, QStringLiteral("restore of %1 failed: %2 %3").arg(plan.targetRef, rest.error, rest.warnings.join(QStringLiteral("; "))));
+        }
+        out.warnings << rest.warnings;
+        done(StepRestore, QStringLiteral("restored %1").arg(plan.targetRef));
     }
-    out.warnings << rest.warnings;
-    done(StepRestore, QStringLiteral("restored %1").arg(plan.targetRef));
 
     // 6. Unit changes.
     const UnitState plasmaUnit = ctx.ops->unitState(kPlasmashellUnit);
