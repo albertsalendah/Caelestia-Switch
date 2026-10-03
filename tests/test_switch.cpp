@@ -206,6 +206,8 @@ private slots:
     void noopCases();
     void preflightRejections();
     void maskRefusedWithDependents();
+    void maskAllowedWithWeakDependents();
+    void maskDependentsClassified();
     void unitStepFailureStopsBeforeLogout();
     void gracefulQuitFailure();
     void finishSucceeds();
@@ -449,18 +451,79 @@ void TestSwitch::maskRefusedWithDependents()
     e.setShellPackage(QStringLiteral("caelestia.desktop"));
     e.backup(Side::Caelestia);
     FakeOps ops(stockMode(), e.configHome());
-    ops.deps[QStringLiteral("plasma-plasmashell.service")] = {QStringLiteral("WantedBy=something.target")};
+    e.ctx.ops = &ops;
+
+    // Each strong relation blocks, even next to a weak one; unreadable answers count as strong.
+    const QStringList strong = {QStringLiteral("RequiredBy=something.service"), QStringLiteral("RequisiteOf=something.service"),
+                                QStringLiteral("BoundBy=something.service"), QStringLiteral("(could not query plasma-plasmashell.service: no bus)")};
+    for (const QString &dep : strong) {
+        ops.deps[QStringLiteral("plasma-plasmashell.service")] = {QStringLiteral("WantedBy=plasma-core.target"), dep};
+        ops.commands.clear();
+        SwitchRequest req;
+        req.direction = Direction::ToCaelestia;
+        req.maskPlasmashell = true;
+        const SwitchOutcome out = runSwitch(req, e.ctx);
+        QVERIFY2(!out.ok, qPrintable(dep));
+        QCOMPARE(out.failedStep, int(StepPreflight));
+        QVERIFY(out.error.contains(QStringLiteral("refusing to mask")));
+        QVERIFY(out.error.contains(dep));
+        QVERIFY(!out.error.contains(QStringLiteral("WantedBy")));   // the weak one is not named as a blocker
+        QVERIFY(ops.commands.isEmpty());                   // nothing was touched
+        QCOMPARE(e.state().result, QStringLiteral("failed"));
+    }
+}
+
+void TestSwitch::maskAllowedWithWeakDependents()
+{
+    // Live finding 2026-10-02: WantedBy=plasma-core.target is always present and must not block masking.
+    Env e;
+    e.setShellPackage(QStringLiteral("caelestia.desktop"));
+    e.backup(Side::Caelestia);
+    FakeOps ops(stockMode(), e.configHome());
+    ops.deps[QStringLiteral("plasma-plasmashell.service")] = {QStringLiteral("WantedBy=plasma-core.target")};
     e.ctx.ops = &ops;
 
     SwitchRequest req;
     req.direction = Direction::ToCaelestia;
     req.maskPlasmashell = true;
     const SwitchOutcome out = runSwitch(req, e.ctx);
-    QVERIFY(!out.ok);
-    QCOMPARE(out.failedStep, int(StepPreflight));
-    QVERIFY(out.error.contains(QStringLiteral("refusing to mask")));
-    QVERIFY(ops.commands.isEmpty());                       // nothing was touched
-    QCOMPARE(e.state().result, QStringLiteral("failed"));
+    QVERIFY2(out.ok, qPrintable(out.error));
+    QVERIFY(ops.indexOf(QStringLiteral("systemctl mask plasma-plasmashell.service")) >= 0);
+    const QStringList w = out.warnings;
+    QVERIFY(w.filter(QStringLiteral("plasma-core.target")).size() == 1);   // warned once, not at every check
+    QVERIFY(e.state().maskPlasmashell);
+}
+
+void TestSwitch::maskDependentsClassified()
+{
+    Env e;
+    FakeOps ops(stockMode(), e.configHome());
+
+    MaskCheck none = checkMaskPlasmashell(&ops);
+    QVERIFY(none.allowed() && none.weak.isEmpty());
+
+    ops.deps[QStringLiteral("plasma-plasmashell.service")] = {QStringLiteral("WantedBy=plasma-core.target")};
+    MaskCheck weak = checkMaskPlasmashell(&ops);
+    QVERIFY(weak.allowed());
+    QCOMPARE(weak.weak, QStringList{QStringLiteral("WantedBy=plasma-core.target")});
+
+    ops.deps[QStringLiteral("plasma-plasmashell.service")] = {QStringLiteral("WantedBy=plasma-core.target"), QStringLiteral("BoundBy=x.service")};
+    MaskCheck both = checkMaskPlasmashell(&ops);
+    QVERIFY(!both.allowed());
+    QCOMPARE(both.blockers, QStringList{QStringLiteral("BoundBy=x.service")});
+    QCOMPARE(both.weak.size(), 1);
+
+    // The same weak relation does not stop a run that is not masking at all.
+    Readings r = stockMode();
+    FakeOps plain(r, e.configHome());
+    plain.deps[QStringLiteral("plasma-plasmashell.service")] = {QStringLiteral("RequiredBy=x.service")};
+    e.ctx.ops = &plain;
+    e.setShellPackage(QStringLiteral("caelestia.desktop"));
+    e.backup(Side::Caelestia);
+    SwitchRequest req;
+    req.direction = Direction::ToCaelestia;
+    SwitchPlan plan;
+    QVERIFY(preflight(req, e.ctx, false, &plan).ok);
 }
 
 void TestSwitch::unitStepFailureStopsBeforeLogout()

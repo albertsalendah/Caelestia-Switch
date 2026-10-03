@@ -37,6 +37,7 @@ struct SwitchPlan {
     QString targetRef;
     bool noop = false;                  // already in the requested mode
     QString message;
+    QStringList warnings;               // non-blocking notes (e.g. weak dependents of plasmashell)
 };
 
 struct SwitchOutcome {
@@ -59,6 +60,20 @@ enum SwitchStep {
     StepLogout = 8,
     StepFinished = 9,
 };
+
+// What depends on plasma-plasmashell.service (architecture D1, amended 2026-10-02).
+// `blockers`: RequiredBy / RequisiteOf / BoundBy entries (strong: masking would break the dependent),
+// and anything that could not be read or understood (unknown counts as strong).
+// `weak`: WantedBy entries (masking is allowed; Test 1 ran two masked boots with the same relation).
+// Entries are "Property=value" strings. Used by the pre-flight, by step 6 and (later) by the GUI.
+struct MaskCheck {
+    QStringList blockers;
+    QStringList weak;
+    bool allowed() const { return blockers.isEmpty(); }
+};
+
+// One live query of plasmashell's dependents, split into strong and weak.
+MaskCheck checkMaskPlasmashell(SwitchOps *ops);
 
 // Checks that a switch may start. `checkState` = false when called by the executor that
 // the launcher already marked as "transitioning".

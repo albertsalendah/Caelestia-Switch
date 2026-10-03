@@ -20,7 +20,7 @@ public:
 
     // `systemctl --user <args>`; false (and *error) on a non-zero exit.
     virtual bool systemctl(const QStringList &args, QString *error) = 0;
-    // Non-empty "Property=value" entries among `properties` (RequiredBy, WantedBy, BoundBy).
+    // Non-empty "Property=value" entries among `properties` (e.g. RequiredBy, RequisiteOf, BoundBy, WantedBy).
     virtual QStringList dependents(const QString &unit, const QStringList &properties) = 0;
     virtual bool waitInactive(const QString &unit, int timeoutMs) = 0;
 

@@ -55,7 +55,7 @@ Additional rules:
 - **Caelestia is disabled, not masked** (`systemctl --user disable --now`). `caelestia-shell.service` is a regular file in `~/.config/systemd/user`, and masking would collide with it. *Checked 2026-09-30: `disable --now` holds across a logout and login, and `enable --now` restores it live.*
 - **Quit Caelestia gracefully, not with a plain `systemctl stop`** (checked 2026-10-01; architecture D18): a plain stop leaves its stolen shortcuts and screen corner in place, which is the Test 14 breakage.
 - **Stop Caelestia before resetting `ShellPackage`.** Caelestia's startup wrapper (`~/.local/bin/caelestia-autostart.sh`) rewrites it to `caelestia.desktop`.
-- **Pre-flight before masking plasmashell**, live, every time: `RequiredBy`, `WantedBy` and `BoundBy` of `plasma-plasmashell.service` must be empty. If not, refuse to mask.
+- **Pre-flight before masking plasmashell**, live, every time (architecture D1, amended 2026-10-02): `RequiredBy`, `RequisiteOf` and `BoundBy` of `plasma-plasmashell.service` must be empty, otherwise the app refuses to mask; `WantedBy` (a weak link, always `plasma-core.target` in a live session) only produces a warning that names the units. The GUI runs the same check when the window loads: strong dependent = checkbox greyed out with the reason; weak only = warning and a "proceed?" question.
 - **Helper units** (`cliphist.service`, the update-checker timer/service): stop them with Caelestia only if a live check shows nothing depends on them; otherwise leave them running. The KWin workspace-tracker effect is not a process and is left alone.
 
 ## Order of operations for a switch

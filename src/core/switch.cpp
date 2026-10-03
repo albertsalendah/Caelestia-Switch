@@ -91,7 +91,33 @@ QStringList finalProblems(const SwitchState &st, const Readings &r)
     return p;
 }
 
+QString maskBlockedMessage(const QStringList &blockers)
+{
+    return QStringLiteral("refusing to mask plasmashell, something depends on it: %1").arg(blockers.join(QStringLiteral(", ")));
+}
+
+QString maskWeakMessage(const QStringList &weak)
+{
+    return QStringLiteral("plasmashell is only weakly wanted by %1; masking it anyway (a WantedBy link does not stop a masked unit)")
+        .arg(weak.join(QStringLiteral(", ")));
+}
+
 } // namespace
+
+MaskCheck checkMaskPlasmashell(SwitchOps *ops)
+{
+    MaskCheck c;
+    const QStringList found = ops->dependents(kPlasmashellUnit, {QStringLiteral("RequiredBy"), QStringLiteral("RequisiteOf"),
+                                                                 QStringLiteral("BoundBy"), QStringLiteral("WantedBy")});
+    for (const QString &entry : found) {
+        if (entry.startsWith(QLatin1String("WantedBy="))) {
+            c.weak << entry;
+        } else {
+            c.blockers << entry;   // strong, or an unreadable answer: treated as a dependent
+        }
+    }
+    return c;
+}
 
 QString directionKey(Direction d)
 {
@@ -184,11 +210,14 @@ OpResult preflight(const SwitchRequest &req, const SwitchContext &ctx, bool chec
         p.targetRef = req.targetRef;
     }
 
-    // D1: live dependency check before masking plasmashell.
+    // D1: live dependency check before masking plasmashell (strong dependents block, weak ones only warn).
     if (!toStock && req.maskPlasmashell) {
-        const QStringList deps = ctx.ops->dependents(kPlasmashellUnit, {QStringLiteral("RequiredBy"), QStringLiteral("WantedBy"), QStringLiteral("BoundBy")});
-        if (!deps.isEmpty()) {
-            return fail(QStringLiteral("refusing to mask plasmashell, something depends on it: %1").arg(deps.join(QStringLiteral(", "))));
+        const MaskCheck mc = checkMaskPlasmashell(ctx.ops);
+        if (!mc.allowed()) {
+            return fail(maskBlockedMessage(mc.blockers));
+        }
+        if (!mc.weak.isEmpty()) {
+            p.warnings << maskWeakMessage(mc.weak);
         }
     }
 
@@ -256,6 +285,7 @@ SwitchOutcome runSwitch(const SwitchRequest &req, const SwitchContext &ctx)
         return out;
     }
     st.targetRef = plan.targetRef;
+    out.warnings << plan.warnings;
     const Readings before = ctx.ops->readings();
     done(StepPreflight, QStringLiteral("pre-flight"));
 
@@ -344,9 +374,9 @@ SwitchOutcome runSwitch(const SwitchRequest &req, const SwitchContext &ctx)
             return fail(StepUnits, err);
         }
         if (req.maskPlasmashell) {
-            const QStringList deps = ctx.ops->dependents(kPlasmashellUnit, {QStringLiteral("RequiredBy"), QStringLiteral("WantedBy"), QStringLiteral("BoundBy")});
-            if (!deps.isEmpty()) {
-                return fail(StepUnits, QStringLiteral("refusing to mask plasmashell, something depends on it: %1").arg(deps.join(QStringLiteral(", "))));
+            const MaskCheck mc = checkMaskPlasmashell(ctx.ops);
+            if (!mc.allowed()) {
+                return fail(StepUnits, maskBlockedMessage(mc.blockers));
             }
             if (!plasmaUnit.masked() && !ctx.ops->systemctl({QStringLiteral("mask"), kPlasmashellUnit}, &err)) {
                 return fail(StepUnits, err);

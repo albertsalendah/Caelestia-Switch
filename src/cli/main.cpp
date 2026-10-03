@@ -89,6 +89,15 @@ int cmdSwitch(cs::Direction dir, const QCommandLineParser &parser)
     cs::RealOps ops;
     const cs::SwitchContext ctx = makeContext(&ops);
     const cs::SwitchRequest req = makeRequest(dir, parser);
+    if (req.maskPlasmashell) {
+        // Early look at what depends on plasmashell, so the weak-dependency note shows before the switch starts.
+        // (launchSwitch repeats the check; a strong dependent is refused there.)
+        const cs::MaskCheck mc = cs::checkMaskPlasmashell(&ops);
+        if (mc.allowed() && !mc.weak.isEmpty()) {
+            QTextStream(stdout) << "Note: plasmashell is only weakly wanted by " << mc.weak.join(QStringLiteral(", "))
+                                << "; masking it is allowed.\n";
+        }
+    }
     const cs::OpResult res = cs::launchSwitch(req, ctx, QCoreApplication::applicationFilePath());
     if (!res.ok) {
         QTextStream(stderr) << "caelestia-switch: " << res.error << '\n';
