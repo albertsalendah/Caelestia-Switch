@@ -1,6 +1,6 @@
 # Caelestia KDE Switch App — Spec
 
-*Revised 2026-10-01 (v2.1: status implemented, version detection amended). Supersedes the earlier terminal-first spec. Working name: `caelestia-switch` (provisional).*
+*Revised 2026-10-04 (v2.2: mask-only change, `repair` and new state keys added; earlier v2.1: status implemented, version detection amended). Supersedes the earlier terminal-first spec. Working name: `caelestia-switch` (provisional).*
 
 ## Purpose
 

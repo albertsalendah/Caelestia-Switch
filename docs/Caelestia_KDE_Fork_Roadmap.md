@@ -1,6 +1,6 @@
 # Caelestia KDE Switch App & Fork — Roadmap
 
-*Revised 2026-10-01 (A1 done). The plan is now app-first; the fork is a separate, later track.*
+*Revised 2026-10-04 (A1 and A2 done, A3 in progress). The plan is now app-first; the fork is a separate, later track.*
 
 ## Goal
 
@@ -51,7 +51,9 @@ Timestamped two-sided snapshots, the dropdown listing, and the automatic snapsho
 
 The switch rules, graceful Caelestia quit (D18), helper-unit handling, state file, `repair`, and the logout step. Every step's result is checked explicitly: in the manual A2 round trip a `grep -c` that found 0 matches returned exit status 1 and silently skipped the logout. Also check in A3: the lock screen in stock mode (`Meta+L`; Plasma's own or still Caelestia's, since both `ShellPackage` and `kscreenlockerrc` change), and `plasmashell` started without panels in Caelestia mode.
 
-**Progress (2026-10-03, later):** `repair` implemented (architecture D20: default rollback to the side that was left, failure and cause shown, safety-net shell start, 27 QtTest cases in `test_switch`); first live scenario (executor killed mid-switch, then `repair`) passed on the ASUS 2026-10-04. Earlier the same day: the mask path (`on --mask` from stock, then `off` from the masked state) and the mask-only change (`on --mask` and `on` while Caelestia runs, then `off`) passed live on the ASUS (architecture D1, D19).
+**Progress (2026-10-04):** `repair` is implemented (architecture D20: default rollback to the side that was left, failure and cause shown, safety-net shell start; 30 QtTest cases in `test_switch`). Live on the ASUS: an executor killed mid-switch then `repair` (passed); a forced config-restore failure with a failing first repair (passed, three findings fixed); the second repair exposed that the executor process never received the "config may be touched" flag (fixed through `runSwitchArguments`). **Still to do in A3:** re-run the forced-failure sequence on the fixed build, `repair` with no state file, killing the CLI mid-switch, repeated off/on cycles, and the post-login service (A3b) with the first small GUI window.
+
+**Progress (2026-10-03):** the mask path (`on --mask` from stock, then `off` from the masked state) and the mask-only change (`on --mask` and `on` while Caelestia runs, then `off`) passed live on the ASUS (architecture D1, D19).
 
 **Earlier progress (2026-10-02):** batch A3a (state file, executor, `on` / `off` / `finish`, 13 QtTest cases with a fake system) is live-tested on the ASUS: `off --no-logout`, a full `off` with the automatic logout then `finish`, and a full `on` back, all as expected (architecture D19). Still to do in A3: the automatic post-login `finish` (user service) with the reopen-and-notify message, `repair`, and the remaining live checks (interrupting a switch by killing the app, repeated off/on cycles). The Plasma version label no longer runs `plasmashell --version`.
 

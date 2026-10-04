@@ -1,6 +1,6 @@
 # Caelestia KDE Switch App & Fork — Architecture & Design Decisions
 
-*Revised 2026-10-02 (D4 resolved, D11 narrowed, D15 amended, D16 build note, D17-D19 added, D1 live finding). Supersedes the earlier "fork-first" version of this document.*
+*Revised 2026-10-04 (D1 amended and live-tested, D19 addendum, D20 `repair` added with live results; earlier: D4 resolved, D11 narrowed, D15 amended, D16 build note, D17-D19 added). Supersedes the earlier "fork-first" version of this document.*
 
 ## What this project is now
 
@@ -168,7 +168,7 @@ Checked on the ASUS on 2026-10-01 against the 2026-09-30 stock reference:
 
 **Decision (user):** by default `repair` restores the system to the side that was being left, and tells the user that the switch failed and, if possible, why. It does not resume the interrupted switch.
 
-**Design (implemented and unit-tested 2026-10-03; live test pending):**
+**Design (implemented and unit-tested 2026-10-03; partly live-tested 2026-10-04, see the live results below; 30 QtTest cases in `test_switch`):**
 - **A rollback is a switch toward the side that was left**, run by the same executor with `SwitchRequest::repair`: same transient service, lock, steps, verify and logout; the target backup is the snapshot of step 2. The repair flag skips only what a half-switched system fails: the "switch in progress" check, the consistency check and the snapshot (a broken state is never filed under a side's name). Caelestia is quit gracefully first in a repair, as for any restore.
 - **State file** keeps what the rollback needs: `leaving`, `plasmaWasMasked`, `failedStep`, `cause`, `rolledBack` (all optional; older files still read), result `rolled-back`. A repair keeps `snapshotRef` and the original `cause`, so it can be run again after a failed repair (found by a test: clearing `snapshotRef` made the second run pick "the newest backup" instead of the snapshot).
 - **`planRepair`** (pure, unit-tested) reads the state file and the readings and returns the failure sentence, the rollback request and warnings. The CLI shows failure, notes and action, then launches it. `finish` closes a rollback with "Rolled back: <cause>. You are back in <mode> mode."
