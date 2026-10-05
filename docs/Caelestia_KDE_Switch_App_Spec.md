@@ -1,6 +1,6 @@
 # Caelestia KDE Switch App — Spec
 
-*Revised 2026-10-05 (v2.3: post-login service and `post-login` command added; earlier v2.2: mask-only change, `repair` and new state keys added; earlier v2.1: status implemented, version detection amended). Supersedes the earlier terminal-first spec. Working name: `caelestia-switch` (provisional).*
+*Revised 2026-10-05 (v2.4: result window added; v2.3: post-login service and `post-login` command added; earlier v2.2: mask-only change, `repair` and new state keys added; earlier v2.1: status implemented, version detection amended). Supersedes the earlier terminal-first spec. Working name: `caelestia-switch` (provisional).*
 
 ## Purpose
 
@@ -40,6 +40,10 @@ Shows: plasmashell status, the source of the installed Caelestia, and its versio
 - the direction of the switch (from the current mode to the other);
 - a checkbox (see rules below);
 - a **Switch** button.
+
+### Result window (first batch of the GUI, decided 2026-10-05; architecture D22)
+
+A small window that tells the user what happened to the last switch. The post-login service opens it after every switch, together with the desktop notification (both, by the user's choice), and it also opens when the app is started by hand. It shows the result (switch complete / rolled back with the cause / did not complete or interrupted, with "Run 'caelestia-switch repair' in a terminal ..."), the current readings underneath, and a Close button; closing it marks the result as seen. With nothing waiting it shows a neutral heading and the readings. It runs in its own transient user service, so it is independent of both shells. Screens A and B follow in a later batch.
 
 ## Switch rules (confirmed 2026-09-30)
 

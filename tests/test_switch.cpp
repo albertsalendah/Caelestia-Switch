@@ -258,6 +258,9 @@ private slots:
     void postLoginServiceFailuresAreReported();
     void postLoginReportsOutcome();
     void notificationRetryOnlyWhenNoServer();
+    void describeResultCases();
+    void markSeenClearsUnseen();
+    void guiBinaryLookup();
     void repairFailureSentenceHasNoTrailingPeriod();
 };
 
@@ -1249,6 +1252,141 @@ void TestSwitch::notificationRetryOnlyWhenNoServer()
     QVERIFY(!notificationErrorIsRetryable(QStringLiteral("org.freedesktop.DBus.Error.Timeout")));
     QVERIFY(!notificationErrorIsRetryable(QStringLiteral("org.freedesktop.DBus.Error.AccessDenied")));
     QVERIFY(!notificationErrorIsRetryable(QString()));
+}
+
+void TestSwitch::describeResultCases()
+{
+    // Settled and unseen: complete.
+    SwitchState done;
+    done.mode = QStringLiteral("caelestia");
+    done.direction = QStringLiteral("to-caelestia");
+    done.result = QStringLiteral("done");
+    done.unseen = true;
+    ResultView v = describeResult(done);
+    QVERIFY(v.present);
+    QCOMPARE(v.kind, QStringLiteral("done"));
+    QCOMPARE(v.title, QStringLiteral("Switch complete"));
+    QCOMPARE(v.text, QStringLiteral("You are now in Caelestia mode."));
+    done.mode = QStringLiteral("stock");
+    QCOMPARE(describeResult(done).text, QStringLiteral("You are now in stock Plasma mode."));
+
+    // Already seen: nothing to show. An unseen settled state without a known result: nothing either.
+    done.unseen = false;
+    QVERIFY(!describeResult(done).present);
+    SwitchState odd;
+    odd.mode = QStringLiteral("stock");
+    odd.unseen = true;
+    QVERIFY(!describeResult(odd).present);
+
+    // Rolled back: the cause first, then where the system is.
+    SwitchState rb;
+    rb.mode = QStringLiteral("stock");
+    rb.result = QStringLiteral("rolled-back");
+    rb.rolledBack = true;
+    rb.unseen = true;
+    rb.cause = QStringLiteral("The last switch to Caelestia failed at step 5 (config restore): cannot restore x.");
+    v = describeResult(rb);
+    QVERIFY(v.present);
+    QCOMPARE(v.kind, QStringLiteral("rolled-back"));
+    QCOMPARE(v.title, QStringLiteral("Switch rolled back"));
+    QCOMPARE(v.text, QStringLiteral("The last switch to Caelestia failed at step 5 (config restore): cannot restore x. You are back in stock Plasma mode."));
+    rb.cause.clear();
+    QCOMPARE(describeResult(rb).text, QStringLiteral("The switch did not complete. You are back in stock Plasma mode."));
+
+    // The normal wait for the logout is not a result.
+    SwitchState wait;
+    wait.mode = QStringLiteral("pending-logout");
+    wait.direction = QStringLiteral("to-stock");
+    wait.step = 8;
+    QVERIFY(!describeResult(wait).present);
+
+    // The login finished but the expected state was not reached.
+    wait.result = QStringLiteral("failed");
+    wait.error = QStringLiteral("Caelestia is not providing the bar yet");
+    wait.unseen = true;
+    v = describeResult(wait);
+    QVERIFY(v.present);
+    QCOMPARE(v.kind, QStringLiteral("failed"));
+    QCOMPARE(v.title, QStringLiteral("Switch did not complete"));
+    QVERIFY(v.text.contains(QStringLiteral("expected state was not reached")));
+    QVERIFY(v.text.contains(QStringLiteral("Caelestia is not providing the bar yet")));
+    QVERIFY(v.text.contains(QStringLiteral("repair")));
+    QVERIFY(!v.text.contains(QStringLiteral("..")));
+
+    // A step failed: shown even though `unseen` is false, with the way out.
+    SwitchState failed;
+    failed.mode = QStringLiteral("transitioning");
+    failed.direction = QStringLiteral("to-stock");
+    failed.result = QStringLiteral("failed");
+    failed.error = QStringLiteral("boom");
+    failed.failedStep = StepUnits;
+    v = describeResult(failed);
+    QVERIFY(v.present);
+    QCOMPARE(v.title, QStringLiteral("Switch failed"));
+    QVERIFY(v.text.startsWith(QStringLiteral("The last switch to stock Plasma failed at step 6 (unit changes): boom.")));
+    QVERIFY(v.text.contains(QStringLiteral("repair")));
+
+    // Interrupted (or still running): no failure recorded.
+    SwitchState cut;
+    cut.mode = QStringLiteral("transitioning");
+    cut.direction = QStringLiteral("to-caelestia");
+    cut.step = 4;
+    cut.stepName = QStringLiteral("helper units");
+    v = describeResult(cut);
+    QVERIFY(v.present);
+    QCOMPARE(v.title, QStringLiteral("Switch not finished"));
+    QVERIFY(v.text.contains(QStringLiteral("interrupted after step 4")));
+}
+
+void TestSwitch::markSeenClearsUnseen()
+{
+    Env e;
+    QVERIFY(markSeen(e.ctx.stateFile).ok);              // no state file: nothing to do
+    QVERIFY(!QFileInfo::exists(e.ctx.stateFile));
+
+    SwitchState st;
+    st.mode = QStringLiteral("caelestia");
+    st.direction = QStringLiteral("to-caelestia");
+    st.result = QStringLiteral("done");
+    st.unseen = true;
+    QVERIFY(writeState(e.ctx.stateFile, st));
+    QVERIFY(markSeen(e.ctx.stateFile).ok);
+    SwitchState after = e.state();
+    QVERIFY(!after.unseen);
+    QCOMPARE(after.mode, QStringLiteral("caelestia"));   // everything else is kept
+    QCOMPARE(after.result, QStringLiteral("done"));
+    QVERIFY(!describeResult(after).present);              // and the window has nothing left to show
+    QVERIFY(markSeen(e.ctx.stateFile).ok);                // idempotent
+}
+
+void TestSwitch::guiBinaryLookup()
+{
+    const QByteArray oldPath = qgetenv("PATH");
+    qputenv("PATH", "/nonexistent-for-the-test");
+    const auto makeExe = [](const QString &path, bool exec) {
+        writeFile(path, QStringLiteral("#!/bin/sh\n"));
+        QFile::setPermissions(path, exec ? QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner
+                                         : QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    };
+
+    QTemporaryDir d;
+    const QString cli = d.path() + QStringLiteral("/bin");
+    QDir().mkpath(cli);
+    QVERIFY(findGuiBinary(cli).isEmpty());
+
+    // Not executable: ignored.
+    makeExe(d.path() + QStringLiteral("/gui/caelestia-switch-gui"), false);
+    QVERIFY(findGuiBinary(cli).isEmpty());
+
+    // The build-tree layout (../gui/ next to the cli directory).
+    makeExe(d.path() + QStringLiteral("/gui/caelestia-switch-gui"), true);
+    QCOMPARE(findGuiBinary(cli), d.path() + QStringLiteral("/gui/caelestia-switch-gui"));
+
+    // The installed layout (next to the CLI) wins.
+    makeExe(cli + QStringLiteral("/caelestia-switch-gui"), true);
+    QCOMPARE(findGuiBinary(cli), cli + QStringLiteral("/caelestia-switch-gui"));
+
+    qputenv("PATH", oldPath);
 }
 
 void TestSwitch::repairFailureSentenceHasNoTrailingPeriod()

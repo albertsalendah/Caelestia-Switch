@@ -766,6 +766,100 @@ QStringList runSwitchArguments(const SwitchRequest &req)
     return args;
 }
 
+namespace {
+
+QString upperFirst(QString s)
+{
+    if (!s.isEmpty()) {
+        s[0] = s.at(0).toUpper();
+    }
+    return s;
+}
+
+QString withoutTrailingPeriods(QString s)
+{
+    s = s.trimmed();
+    while (s.endsWith(QLatin1Char('.'))) {
+        s.chop(1);
+    }
+    return s;
+}
+
+} // namespace
+
+ResultView describeResult(const SwitchState &st)
+{
+    ResultView v;
+    const bool failed = st.result == QLatin1String("failed") || !st.error.isEmpty();
+    const QString hint = QStringLiteral(" Run 'caelestia-switch repair' in a terminal to go back to the side you left.");
+
+    if (st.mode == QLatin1String("pending-logout")) {
+        if (!failed) {
+            return v;   // the normal wait for the logout
+        }
+        v.present = true;
+        v.kind = QStringLiteral("failed");
+        v.title = QStringLiteral("Switch did not complete");
+        v.text = upperFirst(withoutTrailingPeriods(describeFailure(st))) + QLatin1Char('.') + hint;
+        return v;
+    }
+    if (st.mode == QLatin1String("transitioning")) {
+        v.present = true;
+        v.kind = QStringLiteral("failed");
+        v.title = failed ? QStringLiteral("Switch failed") : QStringLiteral("Switch not finished");
+        v.text = upperFirst(withoutTrailingPeriods(describeFailure(st))) + QLatin1Char('.') + hint;
+        return v;
+    }
+    if (!st.unseen) {
+        return v;
+    }
+    const bool toStock = st.mode == QLatin1String("stock");
+    if (st.result == QLatin1String("rolled-back") || st.rolledBack) {
+        v.present = true;
+        v.kind = QStringLiteral("rolled-back");
+        v.title = QStringLiteral("Switch rolled back");
+        const QString cause = withoutTrailingPeriods(st.cause);
+        v.text = (cause.isEmpty() ? QStringLiteral("The switch did not complete") : upperFirst(cause))
+            + QStringLiteral(". You are back in %1 mode.").arg(shellLabel(toStock));
+        return v;
+    }
+    if (st.result == QLatin1String("done")) {
+        v.present = true;
+        v.kind = QStringLiteral("done");
+        v.title = QStringLiteral("Switch complete");
+        v.text = QStringLiteral("You are now in %1 mode.").arg(shellLabel(toStock));
+    }
+    return v;
+}
+
+OpResult markSeen(const QString &stateFile)
+{
+    SwitchState st;
+    if (!readState(stateFile, &st) || !st.unseen) {
+        return {};
+    }
+    st.unseen = false;
+    QString err;
+    if (!writeState(stateFile, st, &err)) {
+        return {false, err, {}};
+    }
+    return {};
+}
+
+QString findGuiBinary(const QString &cliDir)
+{
+    const QString name = QStringLiteral("caelestia-switch-gui");
+    const QStringList candidates = {cliDir + QLatin1Char('/') + name,
+                                    QDir::cleanPath(cliDir + QStringLiteral("/../gui/") + name)};
+    for (const QString &c : candidates) {
+        const QFileInfo fi(c);
+        if (fi.isFile() && fi.isExecutable()) {
+            return fi.absoluteFilePath();
+        }
+    }
+    return QStandardPaths::findExecutable(name);
+}
+
 QString postLoginUnitName()
 {
     return QStringLiteral("caelestia-switch-post-login.service");
@@ -837,31 +931,18 @@ PostLoginResult runPostLogin(const SwitchContext &ctx, int timeoutMs, int pollMs
     r.ran = true;
     QString summary;
     const OpResult res = finishSwitch(ctx, timeoutMs, pollMs, &summary);
-    if (res.ok) {
-        SwitchState after;
-        readState(ctx.stateFile, &after);
-        r.title = after.rolledBack ? QStringLiteral("Switch rolled back") : QStringLiteral("Switch complete");
-        // The title already says it: drop the same words from the start of the text and capitalise what is left
-        // ("Switch complete: you are now in X mode." -> "You are now in X mode.").
-        r.body = summary;
-        for (const QString &prefix : {QStringLiteral("Switch complete: "), QStringLiteral("Rolled back: ")}) {
-            if (r.body.startsWith(prefix)) {
-                r.body = r.body.mid(prefix.size());
-                break;
-            }
-        }
-        if (!r.body.isEmpty()) {
-            r.body[0] = r.body.at(0).toUpper();
-        }
-        return r;
+    r.ok = res.ok;
+    // One source for the wording: the same text the result window shows.
+    SwitchState after;
+    readState(ctx.stateFile, &after);
+    const ResultView v = describeResult(after);
+    if (v.present) {
+        r.title = v.title;
+        r.body = v.text;
+    } else {
+        r.title = res.ok ? QStringLiteral("Switch complete") : QStringLiteral("Switch did not complete");
+        r.body = res.ok ? summary : res.error;
     }
-    r.ok = false;
-    r.title = QStringLiteral("Switch did not complete");
-    QString why = res.error.trimmed();
-    while (why.endsWith(QLatin1Char('.'))) {
-        why.chop(1);
-    }
-    r.body = QStringLiteral("%1. Run 'caelestia-switch repair' in a terminal to go back to the side you left.").arg(why);
     return r;
 }
 

@@ -207,7 +207,15 @@ int cmdPostLogin()
         return 0;
     }
     logLine(QStringLiteral("post-login: %1: %2").arg(res.title, res.body));
+    // The result window first (a quick start in its own service), then the notification, which can take a while
+    // on a slow server. Both are always shown (decided 2026-10-05, architecture D22).
+    const QString gui = cs::findGuiBinary(QCoreApplication::applicationDirPath());
     QString err;
+    if (gui.isEmpty()) {
+        logLine(QStringLiteral("post-login: caelestia-switch-gui not found, no result window"));
+    } else if (!cs::launchGuiWindow(gui, &err)) {
+        logLine(QStringLiteral("post-login: %1").arg(err));
+    }
     if (!cs::sendNotification(res.title, res.body, 30, &err)) {
         logLine(QStringLiteral("post-login: %1").arg(err));
     }

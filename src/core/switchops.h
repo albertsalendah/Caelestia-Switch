@@ -47,6 +47,11 @@ public:
     bool logout(QString *error) override;
 };
 
+// Starts the result window (`caelestia-switch-gui`) in its own transient user service, so it is not part of the
+// caller's cgroup and survives it (the post-login unit is a one-shot that systemd tears down when it ends).
+// Passes the session's WAYLAND_DISPLAY, which the unit's own environment may lack.
+bool launchGuiWindow(const QString &guiPath, QString *error);
+
 // True for the D-Bus errors that mean "no notification server yet" (the call never reached one), so sending
 // again is safe. A timeout is NOT in this list: the server may be slow but has probably taken the message,
 // and sending again shows it twice (seen live 2026-10-05: three popups under Caelestia).

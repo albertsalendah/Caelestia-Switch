@@ -213,6 +213,25 @@ bool RealOps::logout(QString *error)
     return true;
 }
 
+bool launchGuiWindow(const QString &guiPath, QString *error)
+{
+    QStringList args{QStringLiteral("--user"), QStringLiteral("--collect"), QStringLiteral("--quiet"),
+                     QStringLiteral("--description=Caelestia Switch result window")};
+    const QString display = sessionEnvironment().value(QStringLiteral("WAYLAND_DISPLAY"));
+    if (!display.isEmpty()) {
+        args << QStringLiteral("--setenv=WAYLAND_DISPLAY=") + display;
+    }
+    args << guiPath;
+    QString err;
+    if (runProgram(QStringLiteral("systemd-run"), args, QProcessEnvironment::systemEnvironment(), nullptr, &err, 15000) != 0) {
+        if (error) {
+            *error = QStringLiteral("could not start the result window: %1").arg(err);
+        }
+        return false;
+    }
+    return true;
+}
+
 bool notificationErrorIsRetryable(const QString &dbusErrorName)
 {
     return dbusErrorName == QLatin1String("org.freedesktop.DBus.Error.ServiceUnknown")

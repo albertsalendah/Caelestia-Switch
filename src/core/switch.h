@@ -6,6 +6,7 @@
 #include <functional>
 
 #include "backup.h"
+#include "state.h"
 #include "switchops.h"
 
 namespace cs {
@@ -131,6 +132,28 @@ QString postLoginUnitText(const QString &exePath);
 // Writes the unit under <configHome>/systemd/user and enables it, but only if it is missing, differs
 // (for example the binary moved) or is not enabled. Idempotent. A failure never blocks a switch.
 bool ensurePostLoginService(const SwitchContext &ctx, const QString &exePath, QString *error);
+
+// --- Result view (Phase A4, first batch; architecture D22) ---
+
+// What the result window and the post-login notification say about the switch the state file describes.
+struct ResultView {
+    bool present = false;   // false: nothing to report (no switch, or a settled result that was already seen)
+    QString kind;           // "done" / "rolled-back" / "failed"
+    QString title;
+    QString text;
+};
+
+// Pure: turns a state file into a ResultView. A settled mode (stock / caelestia) is shown only while `unseen`;
+// a failed or unfinished switch (mode transitioning, or pending-logout with a recorded failure) is always shown,
+// with the way out ('repair'). pending-logout without a failure is the normal wait: nothing to show.
+ResultView describeResult(const SwitchState &st);
+
+// Sets unseen=false in the state file (atomic write). No-op if there is no state file or nothing unseen.
+OpResult markSeen(const QString &stateFile);
+
+// The GUI binary that goes with this CLI: next to it (installed layout), then ../gui/ (build tree), then PATH.
+// Empty if none is found. `cliDir` is the directory of the CLI binary.
+QString findGuiBinary(const QString &cliDir);
 
 struct PostLoginResult {
     bool ran = false;       // false: no switch was waiting for its login, nothing to report
