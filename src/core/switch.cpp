@@ -9,6 +9,7 @@
 #include <QFileInfo>
 #include <QLockFile>
 #include <QProcess>
+#include <QSaveFile>
 #include <QThread>
 
 namespace cs {
@@ -682,7 +683,7 @@ OpResult planRepair(const SwitchContext &ctx, RepairPlan *out)
             : (st.direction == directionKey(Direction::ToStock) ? QStringLiteral("caelestia") : QStringLiteral("stock"));
         p.failure = describeFailure(st);
     } else {
-        p.failure = QStringLiteral("No switch is recorded, but the system is inconsistent (%1).").arg(reasons.join(QStringLiteral("; ")));
+        p.failure = QStringLiteral("No switch is recorded, but the system is inconsistent (%1)").arg(reasons.join(QStringLiteral("; ")));
     }
     if (failedState && st.failedStep == StepLogout) {
         p.warnings << QStringLiteral("All steps finished; only the logout call failed. If you just want the switch to complete, "
@@ -765,6 +766,94 @@ QStringList runSwitchArguments(const SwitchRequest &req)
     return args;
 }
 
+QString postLoginUnitName()
+{
+    return QStringLiteral("caelestia-switch-post-login.service");
+}
+
+QString postLoginUnitText(const QString &exePath)
+{
+    QString exe = exePath;
+    exe.replace(QLatin1Char('%'), QStringLiteral("%%"));   // systemd specifier escape
+    return QStringLiteral("[Unit]\n"
+                          "Description=Caelestia Switch: report the result of a switch after login\n"
+                          "After=graphical-session.target\n"
+                          "\n"
+                          "[Service]\n"
+                          "Type=oneshot\n"
+                          "ExecStart=\"%1\" post-login\n"
+                          "TimeoutStartSec=180\n"
+                          "\n"
+                          "[Install]\n"
+                          "WantedBy=graphical-session.target\n")
+        .arg(exe);
+}
+
+bool ensurePostLoginService(const SwitchContext &ctx, const QString &exePath, QString *error)
+{
+    const QString unit = postLoginUnitName();
+    const QString dir = ctx.paths.configHome + QStringLiteral("/systemd/user");
+    const QString path = dir + QLatin1Char('/') + unit;
+    const QString wanted = postLoginUnitText(exePath);
+
+    const bool same = readTextFile(path) == wanted;
+    if (!same) {
+        QDir().mkpath(dir);
+        QSaveFile f(path);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            if (error) {
+                *error = QStringLiteral("cannot write %1; the result of the switch will not be reported after login").arg(path);
+            }
+            return false;
+        }
+        f.write(wanted.toUtf8());
+        if (!f.commit()) {
+            if (error) {
+                *error = QStringLiteral("cannot write %1; the result of the switch will not be reported after login").arg(path);
+            }
+            return false;
+        }
+    }
+    if (same && ctx.ops->unitState(unit).enabled()) {
+        return true;
+    }
+    QString err;
+    if (!ctx.ops->systemctl({QStringLiteral("enable"), unit}, &err)) {
+        if (error) {
+            *error = QStringLiteral("could not enable %1: %2").arg(unit, err);
+        }
+        return false;
+    }
+    return true;
+}
+
+PostLoginResult runPostLogin(const SwitchContext &ctx, int timeoutMs, int pollMs)
+{
+    PostLoginResult r;
+    SwitchState st;
+    if (!readState(ctx.stateFile, &st) || st.mode != QLatin1String("pending-logout")) {
+        return r;   // nothing was waiting for this login
+    }
+    r.ran = true;
+    QString summary;
+    const OpResult res = finishSwitch(ctx, timeoutMs, pollMs, &summary);
+    if (res.ok) {
+        SwitchState after;
+        readState(ctx.stateFile, &after);
+        r.title = after.rolledBack ? QStringLiteral("Switch rolled back") : QStringLiteral("Switch complete");
+        r.body = summary;
+        return r;
+    }
+    r.ok = false;
+    r.title = QStringLiteral("Switch did not complete");
+    QString why = res.error.trimmed();
+    while (why.endsWith(QLatin1Char('.'))) {
+        why.chop(1);
+    }
+    r.body = QStringLiteral("%1. Run 'caelestia-switch repair' in a terminal to go back to the side you left.").arg(why);
+    return r;
+}
+
 OpResult launchSwitch(const SwitchRequest &req, const SwitchContext &ctx, const QString &exePath)
 {
     SwitchPlan plan;
@@ -774,6 +863,12 @@ OpResult launchSwitch(const SwitchRequest &req, const SwitchContext &ctx, const 
     }
     if (plan.noop) {
         return {true, {}, {plan.message}};
+    }
+
+    // The service that reports the result after the next login. Best effort: a switch must not fail because of it.
+    QString serviceErr;
+    if (!ensurePostLoginService(ctx, exePath, &serviceErr)) {
+        note(ctx, QStringLiteral("warning: %1").arg(serviceErr));
     }
 
     SwitchState previous;

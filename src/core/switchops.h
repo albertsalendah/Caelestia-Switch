@@ -47,4 +47,8 @@ public:
     bool logout(QString *error) override;
 };
 
+// Desktop notification over D-Bus (org.freedesktop.Notifications), served by Caelestia or by plasmashell.
+// Right after a login the server may not be up yet, so it retries about once a second for up to `waitSeconds`.
+bool sendNotification(const QString &summary, const QString &body, int waitSeconds, QString *error);
+
 } // namespace cs

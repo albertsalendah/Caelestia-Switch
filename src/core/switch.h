@@ -120,4 +120,28 @@ OpResult launchSwitch(const SwitchRequest &req, const SwitchContext &ctx, const 
 // "stock" or "caelestia" for a settled system, empty if neither (used for no-op and state close-out).
 QString modeOf(const Readings &r);
 
+// --- Post-login service (Phase A3b, architecture D21) ---
+
+// The user unit that runs `caelestia-switch post-login` at every login (WantedBy=graphical-session.target).
+QString postLoginUnitName();
+
+// Text of that unit for a given executable; '%' in the path is escaped for systemd.
+QString postLoginUnitText(const QString &exePath);
+
+// Writes the unit under <configHome>/systemd/user and enables it, but only if it is missing, differs
+// (for example the binary moved) or is not enabled. Idempotent. A failure never blocks a switch.
+bool ensurePostLoginService(const SwitchContext &ctx, const QString &exePath, QString *error);
+
+struct PostLoginResult {
+    bool ran = false;       // false: no switch was waiting for its login, nothing to report
+    bool ok = true;         // the expected final state was reached
+    QString title;          // notification title
+    QString body;           // notification text
+};
+
+// What the post-login service does: if the state is pending-logout, run finishSwitch (which waits up to
+// timeoutMs for the readings to match) and turn the outcome into a notification text. The state stays
+// `unseen` for the GUI (A4).
+PostLoginResult runPostLogin(const SwitchContext &ctx, int timeoutMs, int pollMs);
+
 } // namespace cs

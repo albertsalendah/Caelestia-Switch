@@ -4,6 +4,7 @@
 #include "systemd.h"
 
 #include <QDBusMessage>
+#include <QVariantMap>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QProcess>
@@ -210,6 +211,36 @@ bool RealOps::logout(QString *error)
         return false;
     }
     return true;
+}
+
+bool sendNotification(const QString &summary, const QString &body, int waitSeconds, QString *error)
+{
+    QString lastError;
+    for (int attempt = 0; attempt <= waitSeconds; ++attempt) {
+        QDBusConnection bus = userBusConnection();
+        if (bus.isConnected()) {
+            QDBusMessage msg = QDBusMessage::createMethodCall(QStringLiteral("org.freedesktop.Notifications"),
+                                                              QStringLiteral("/org/freedesktop/Notifications"),
+                                                              QStringLiteral("org.freedesktop.Notifications"),
+                                                              QStringLiteral("Notify"));
+            msg.setArguments({QStringLiteral("Caelestia Switch"), QVariant::fromValue<quint32>(0), QStringLiteral("preferences-desktop"),
+                              summary, body, QStringList(), QVariantMap(), -1});
+            const QDBusMessage reply = bus.call(msg, QDBus::Block, 3000);
+            if (reply.type() == QDBusMessage::ReplyMessage) {
+                return true;
+            }
+            lastError = reply.errorMessage();
+        } else {
+            lastError = QStringLiteral("cannot connect to the user D-Bus");
+        }
+        if (attempt < waitSeconds) {
+            QThread::sleep(1);
+        }
+    }
+    if (error) {
+        *error = QStringLiteral("notification not delivered: %1").arg(lastError);
+    }
+    return false;
 }
 
 } // namespace cs

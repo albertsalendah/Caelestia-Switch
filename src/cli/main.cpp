@@ -196,6 +196,24 @@ int cmdFinish(const QCommandLineParser &parser)
     return 0;
 }
 
+// Internal: run by caelestia-switch-post-login.service at every login. Closes out a switch that was waiting for
+// its logout (like `finish`) and reports the outcome as a desktop notification. Does nothing otherwise.
+int cmdPostLogin()
+{
+    cs::RealOps ops;
+    const cs::SwitchContext ctx = makeContext(&ops);
+    const cs::PostLoginResult res = cs::runPostLogin(ctx, 60000, 2000);
+    if (!res.ran) {
+        return 0;
+    }
+    logLine(QStringLiteral("post-login: %1: %2").arg(res.title, res.body));
+    QString err;
+    if (!cs::sendNotification(res.title, res.body, 30, &err)) {
+        logLine(QStringLiteral("post-login: %1").arg(err));
+    }
+    return res.ok ? 0 : 1;
+}
+
 int cmdStatus(const QCommandLineParser &parser)
 {
     const cs::Readings r = cs::gatherReadings();
@@ -280,7 +298,8 @@ int main(int argc, char *argv[])
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral(
         "Switch between Plasma and Caelestia KDE.\n\n"
-        "Commands: status, backup, backups, restore <side/id>, on, off, finish, repair. Planned: install, update, uninstall."));
+        "Commands: status, backup, backups, restore <side/id>, on, off, finish, repair. Planned: install, update, uninstall.\n"
+        "Internal: run-switch (the executor), post-login (reports a switch result after login)."));
     parser.addHelpOption();
     parser.addVersionOption();
     parser.addOption(QCommandLineOption(QStringLiteral("json"), QStringLiteral("status: print the readings as JSON.")));
@@ -329,6 +348,9 @@ int main(int argc, char *argv[])
     }
     if (cmd == QLatin1String("repair")) {
         return cmdRepair(parser);
+    }
+    if (cmd == QLatin1String("post-login")) {
+        return cmdPostLogin();
     }
     QTextStream(stderr) << "caelestia-switch: '" << cmd << "' is not implemented yet.\n";
     return 2;

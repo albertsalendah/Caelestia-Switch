@@ -253,6 +253,11 @@ private slots:
     void repairDoesNotTrustReadingsAfterPartialRestore();
     void repairSafetyNetTimeout();
     void executorArgumentsCarryEveryFlag();
+    void postLoginUnitText();
+    void postLoginServiceIsInstalledOnce();
+    void postLoginServiceFailuresAreReported();
+    void postLoginReportsOutcome();
+    void repairFailureSentenceHasNoTrailingPeriod();
 };
 
 void TestSwitch::stateRoundTrip()
@@ -1111,6 +1116,139 @@ void TestSwitch::executorArgumentsCarryEveryFlag()
     const QStringList b = runSwitchArguments(normal);
     QVERIFY(b.contains(QStringLiteral("--mask")));
     QVERIFY(!b.contains(QStringLiteral("--as-repair")) && !b.contains(QStringLiteral("--config-touched")) && !b.contains(QStringLiteral("--no-logout")));
+}
+
+void TestSwitch::postLoginUnitText()
+{
+    const QString t = cs::postLoginUnitText(QStringLiteral("/home/u/Caelestia-Switch/build/src/cli/caelestia-switch"));
+    QVERIFY(t.contains(QStringLiteral("ExecStart=\"/home/u/Caelestia-Switch/build/src/cli/caelestia-switch\" post-login")));
+    QVERIFY(t.contains(QStringLiteral("Type=oneshot")));
+    QVERIFY(t.contains(QStringLiteral("WantedBy=graphical-session.target")));
+    QVERIFY(t.contains(QStringLiteral("After=graphical-session.target")));
+    // A '%' in the path must not be read as a systemd specifier.
+    QVERIFY(cs::postLoginUnitText(QStringLiteral("/a%b/x")).contains(QStringLiteral("/a%%b/x")));
+    QCOMPARE(cs::postLoginUnitName(), QStringLiteral("caelestia-switch-post-login.service"));
+}
+
+void TestSwitch::postLoginServiceIsInstalledOnce()
+{
+    Env e;
+    FakeOps ops(stockMode(), e.configHome());
+    e.ctx.ops = &ops;
+    const QString unitFile = e.cfg("systemd/user/caelestia-switch-post-login.service");
+    const QString enableCmd = QStringLiteral("systemctl enable caelestia-switch-post-login.service");
+    QString err;
+
+    // First time: written and enabled.
+    QVERIFY2(ensurePostLoginService(e.ctx, QStringLiteral("/opt/cs/caelestia-switch"), &err), qPrintable(err));
+    QCOMPARE(readFileText(unitFile), cs::postLoginUnitText(QStringLiteral("/opt/cs/caelestia-switch")));
+    QCOMPARE(ops.commands.count(enableCmd), 1);
+
+    // Second time, same binary, already enabled: nothing happens.
+    ops.commands.clear();
+    QVERIFY(ensurePostLoginService(e.ctx, QStringLiteral("/opt/cs/caelestia-switch"), &err));
+    QVERIFY(ops.commands.isEmpty());
+
+    // The binary moved: the unit is rewritten and enabled again.
+    QVERIFY(ensurePostLoginService(e.ctx, QStringLiteral("/elsewhere/caelestia-switch"), &err));
+    QVERIFY(readFileText(unitFile).contains(QStringLiteral("/elsewhere/caelestia-switch")));
+    QCOMPARE(ops.commands.count(enableCmd), 1);
+
+    // The file is right but the unit got disabled meanwhile: enabled again, file untouched.
+    ops.commands.clear();
+    ops.units[QStringLiteral("caelestia-switch-post-login.service")].unitFileState = QStringLiteral("disabled");
+    QVERIFY(ensurePostLoginService(e.ctx, QStringLiteral("/elsewhere/caelestia-switch"), &err));
+    QCOMPARE(ops.commands, QStringList{enableCmd});
+}
+
+void TestSwitch::postLoginServiceFailuresAreReported()
+{
+    // The unit cannot be written: <configHome>/systemd is a file, so the directory cannot be created.
+    Env e;
+    FakeOps ops(stockMode(), e.configHome());
+    e.ctx.ops = &ops;
+    writeFile(e.cfg("systemd"), QStringLiteral("not a directory\n"));
+    QString err;
+    QVERIFY(!ensurePostLoginService(e.ctx, QStringLiteral("/opt/cs/caelestia-switch"), &err));
+    QVERIFY(err.contains(QStringLiteral("cannot write")));
+    QVERIFY(ops.commands.isEmpty());
+
+    // `systemctl enable` fails.
+    Env e2;
+    FakeOps ops2(stockMode(), e2.configHome());
+    ops2.failOn << QStringLiteral("systemctl enable caelestia-switch-post-login.service");
+    e2.ctx.ops = &ops2;
+    QVERIFY(!ensurePostLoginService(e2.ctx, QStringLiteral("/opt/cs/caelestia-switch"), &err));
+    QVERIFY(err.contains(QStringLiteral("could not enable")));
+}
+
+void TestSwitch::postLoginReportsOutcome()
+{
+    // No state file, or a settled mode: nothing was waiting for this login, nothing is reported.
+    Env e;
+    FakeOps stock(stockMode(), e.configHome());
+    e.ctx.ops = &stock;
+    PostLoginResult r = runPostLogin(e.ctx, 100, 10);
+    QVERIFY(!r.ran);
+    SwitchState settled;
+    settled.mode = QStringLiteral("stock");
+    QVERIFY(writeState(e.ctx.stateFile, settled));
+    QVERIFY(!runPostLogin(e.ctx, 100, 10).ran);
+    QCOMPARE(e.state().mode, QStringLiteral("stock"));
+
+    // A switch to Caelestia that reached its final state: closed out, reported as complete, left unseen for the GUI.
+    FakeOps cae(caelestiaMode(), e.configHome());
+    e.ctx.ops = &cae;
+    SwitchState waiting;
+    waiting.mode = QStringLiteral("pending-logout");
+    waiting.direction = QStringLiteral("to-caelestia");
+    waiting.step = 8;
+    QVERIFY(writeState(e.ctx.stateFile, waiting));
+    r = runPostLogin(e.ctx, 200, 10);
+    QVERIFY(r.ran && r.ok);
+    QCOMPARE(r.title, QStringLiteral("Switch complete"));
+    QVERIFY(r.body.contains(QStringLiteral("Caelestia mode")));
+    QCOMPARE(e.state().mode, QStringLiteral("caelestia"));
+    QVERIFY(e.state().unseen);
+
+    // A rollback after a repair is reported as such, with the cause.
+    waiting.direction = QStringLiteral("to-caelestia");
+    waiting.rolledBack = true;
+    waiting.cause = QStringLiteral("The last switch to stock Plasma failed at step 6 (unit changes): x");
+    QVERIFY(writeState(e.ctx.stateFile, waiting));
+    r = runPostLogin(e.ctx, 200, 10);
+    QVERIFY(r.ran && r.ok);
+    QCOMPARE(r.title, QStringLiteral("Switch rolled back"));
+    QVERIFY(r.body.startsWith(QStringLiteral("Rolled back")));
+    QVERIFY(r.body.contains(QStringLiteral("failed at step 6")));
+
+    // The expected state was not reached: reported as a failure with the way out; the record stays open.
+    FakeOps wrong(stockMode(), e.configHome());          // still stock, but a switch to Caelestia was expected
+    e.ctx.ops = &wrong;
+    SwitchState bad;
+    bad.mode = QStringLiteral("pending-logout");
+    bad.direction = QStringLiteral("to-caelestia");
+    QVERIFY(writeState(e.ctx.stateFile, bad));
+    r = runPostLogin(e.ctx, 60, 10);
+    QVERIFY(r.ran && !r.ok);
+    QCOMPARE(r.title, QStringLiteral("Switch did not complete"));
+    QVERIFY(r.body.contains(QStringLiteral("repair")));
+    QVERIFY(!r.body.contains(QStringLiteral("..")));
+    QCOMPARE(e.state().mode, QStringLiteral("pending-logout"));
+}
+
+void TestSwitch::repairFailureSentenceHasNoTrailingPeriod()
+{
+    // Seen live 2026-10-05: the CLI adds its own period, so the sentence printed "(...).." .
+    Env e;
+    e.setShellPackage(QString());
+    e.backup(Side::Stock);
+    FakeOps ops(halfSwitched("disabled"), e.configHome());
+    e.ctx.ops = &ops;
+    RepairPlan plan;
+    QVERIFY(planRepair(e.ctx, &plan).ok);
+    QVERIFY(plan.failure.startsWith(QStringLiteral("No switch is recorded")));
+    QVERIFY2(!plan.failure.endsWith(QLatin1Char('.')), qPrintable(plan.failure));
 }
 
 QTEST_GUILESS_MAIN(TestSwitch)
