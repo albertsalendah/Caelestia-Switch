@@ -47,8 +47,14 @@ public:
     bool logout(QString *error) override;
 };
 
+// True for the D-Bus errors that mean "no notification server yet" (the call never reached one), so sending
+// again is safe. A timeout is NOT in this list: the server may be slow but has probably taken the message,
+// and sending again shows it twice (seen live 2026-10-05: three popups under Caelestia).
+bool notificationErrorIsRetryable(const QString &dbusErrorName);
+
 // Desktop notification over D-Bus (org.freedesktop.Notifications), served by Caelestia or by plasmashell.
-// Right after a login the server may not be up yet, so it retries about once a second for up to `waitSeconds`.
+// Right after a login the server may not be up yet, so "no server" is retried about once a second for up to
+// `waitSeconds`; any other failure, a timeout included, is reported and never resent.
 bool sendNotification(const QString &summary, const QString &body, int waitSeconds, QString *error);
 
 } // namespace cs

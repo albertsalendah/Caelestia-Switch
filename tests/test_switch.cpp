@@ -257,6 +257,7 @@ private slots:
     void postLoginServiceIsInstalledOnce();
     void postLoginServiceFailuresAreReported();
     void postLoginReportsOutcome();
+    void notificationRetryOnlyWhenNoServer();
     void repairFailureSentenceHasNoTrailingPeriod();
 };
 
@@ -1208,6 +1209,7 @@ void TestSwitch::postLoginReportsOutcome()
     QVERIFY(r.ran && r.ok);
     QCOMPARE(r.title, QStringLiteral("Switch complete"));
     QVERIFY(r.body.contains(QStringLiteral("Caelestia mode")));
+    QCOMPARE(r.body, QStringLiteral("You are now in Caelestia mode."));   // the title is not repeated in the text
     QCOMPARE(e.state().mode, QStringLiteral("caelestia"));
     QVERIFY(e.state().unseen);
 
@@ -1219,8 +1221,8 @@ void TestSwitch::postLoginReportsOutcome()
     r = runPostLogin(e.ctx, 200, 10);
     QVERIFY(r.ran && r.ok);
     QCOMPARE(r.title, QStringLiteral("Switch rolled back"));
-    QVERIFY(r.body.startsWith(QStringLiteral("Rolled back")));
-    QVERIFY(r.body.contains(QStringLiteral("failed at step 6")));
+    QVERIFY(r.body.startsWith(QStringLiteral("The last switch to stock Plasma failed at step 6")));   // cause first, no "Rolled back:" twice
+    QVERIFY(r.body.endsWith(QStringLiteral("You are back in Caelestia mode.")));
 
     // The expected state was not reached: reported as a failure with the way out; the record stays open.
     FakeOps wrong(stockMode(), e.configHome());          // still stock, but a switch to Caelestia was expected
@@ -1235,6 +1237,18 @@ void TestSwitch::postLoginReportsOutcome()
     QVERIFY(r.body.contains(QStringLiteral("repair")));
     QVERIFY(!r.body.contains(QStringLiteral("..")));
     QCOMPARE(e.state().mode, QStringLiteral("pending-logout"));
+}
+
+void TestSwitch::notificationRetryOnlyWhenNoServer()
+{
+    // Live finding 2026-10-05: a slow notification server answered late, the call timed out, the retry sent the
+    // message again and Caelestia showed it three times. Only "no server yet" may be retried.
+    QVERIFY(notificationErrorIsRetryable(QStringLiteral("org.freedesktop.DBus.Error.ServiceUnknown")));
+    QVERIFY(notificationErrorIsRetryable(QStringLiteral("org.freedesktop.DBus.Error.NameHasNoOwner")));
+    QVERIFY(!notificationErrorIsRetryable(QStringLiteral("org.freedesktop.DBus.Error.NoReply")));      // timeout
+    QVERIFY(!notificationErrorIsRetryable(QStringLiteral("org.freedesktop.DBus.Error.Timeout")));
+    QVERIFY(!notificationErrorIsRetryable(QStringLiteral("org.freedesktop.DBus.Error.AccessDenied")));
+    QVERIFY(!notificationErrorIsRetryable(QString()));
 }
 
 void TestSwitch::repairFailureSentenceHasNoTrailingPeriod()

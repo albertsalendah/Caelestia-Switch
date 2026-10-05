@@ -213,6 +213,12 @@ bool RealOps::logout(QString *error)
     return true;
 }
 
+bool notificationErrorIsRetryable(const QString &dbusErrorName)
+{
+    return dbusErrorName == QLatin1String("org.freedesktop.DBus.Error.ServiceUnknown")
+        || dbusErrorName == QLatin1String("org.freedesktop.DBus.Error.NameHasNoOwner");
+}
+
 bool sendNotification(const QString &summary, const QString &body, int waitSeconds, QString *error)
 {
     QString lastError;
@@ -225,11 +231,18 @@ bool sendNotification(const QString &summary, const QString &body, int waitSecon
                                                               QStringLiteral("Notify"));
             msg.setArguments({QStringLiteral("Caelestia Switch"), QVariant::fromValue<quint32>(0), QStringLiteral("preferences-desktop"),
                               summary, body, QStringList(), QVariantMap(), -1});
-            const QDBusMessage reply = bus.call(msg, QDBus::Block, 3000);
+            // A long call timeout: right after a login the server can be busy for several seconds on the 4 GiB laptop.
+            const QDBusMessage reply = bus.call(msg, QDBus::Block, 20000);
             if (reply.type() == QDBusMessage::ReplyMessage) {
                 return true;
             }
             lastError = reply.errorMessage();
+            if (!notificationErrorIsRetryable(reply.errorName())) {
+                if (error) {
+                    *error = QStringLiteral("notification not confirmed (it may still have been shown): %1").arg(lastError);
+                }
+                return false;   // never resend: it would show the message twice
+            }
         } else {
             lastError = QStringLiteral("cannot connect to the user D-Bus");
         }

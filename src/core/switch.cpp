@@ -841,7 +841,18 @@ PostLoginResult runPostLogin(const SwitchContext &ctx, int timeoutMs, int pollMs
         SwitchState after;
         readState(ctx.stateFile, &after);
         r.title = after.rolledBack ? QStringLiteral("Switch rolled back") : QStringLiteral("Switch complete");
+        // The title already says it: drop the same words from the start of the text and capitalise what is left
+        // ("Switch complete: you are now in X mode." -> "You are now in X mode.").
         r.body = summary;
+        for (const QString &prefix : {QStringLiteral("Switch complete: "), QStringLiteral("Rolled back: ")}) {
+            if (r.body.startsWith(prefix)) {
+                r.body = r.body.mid(prefix.size());
+                break;
+            }
+        }
+        if (!r.body.isEmpty()) {
+            r.body[0] = r.body.at(0).toUpper();
+        }
         return r;
     }
     r.ok = false;
