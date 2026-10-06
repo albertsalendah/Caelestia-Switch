@@ -67,6 +67,8 @@ Loading screen, Screen A (backup needed), Screen B (switch, dropdown, checkbox),
 
 **Progress (2026-10-05):** decided to build it in batches, starting with the **result window** (the "switch finished" view; architecture D22): `describeResult` / `markSeen` in the core, `src/gui/resultwindow.*`, and the post-login service opening the window together with the notification. Implemented, unit-tested (`test_switch` 39 cases, new `test_gui` 5 cases) and live-tested on the ASUS on 2026-10-06 in both modes (window after login with one notification, Close clears the flag, no window on a login with nothing pending, the status page). Screens A and B (loading screen, backup needed, switch with dropdown and checkbox, warning dialog) are the next batch.
 
+**Progress (2026-10-06):** batch 2 is split in two. **Batch 2a is implemented and unit-tested** (architecture D23): the result window became the banner of one main window, with a loading page, Screen A (Backup button, only while Caelestia runs), Screen B (target-side dropdown, mask checkbox with the live D1 check, Switch button inactive) and a Blocked message; the screen choice is the pure `buildScreenModel` in `src/core/screens.*`; `test_switch` 44 cases, `test_gui` 11 cases; live test on the ASUS pending. **Batch 2b** (the active Switch button, the warning dialog, the mask confirmation with "don't ask again", `findCliBinary` for the executor, the `.desktop` entry reachable from both launchers) follows.
+
 **Done when:** the whole flow works from the GUI in both Caelestia and stock Plasma on the test laptop.
 
 ### Phase A5 — install / update / uninstall with a source picker

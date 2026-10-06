@@ -1,4 +1,4 @@
-add_library(switchgui STATIC resultwindow.cpp resultwindow.h)
+add_library(switchgui STATIC mainwindow.cpp mainwindow.h)
 target_include_directories(switchgui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(switchgui PUBLIC switchcore Qt6::Widgets)
 

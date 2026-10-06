@@ -8,6 +8,7 @@
 #include "consistency.h"
 #include "plasmaconfig.h"
 #include "readings.h"
+#include "screens.h"
 #include "state.h"
 #include "switch.h"
 
@@ -261,6 +262,11 @@ private slots:
     void describeResultCases();
     void markSeenClearsUnseen();
     void guiBinaryLookup();
+    void screenBlockedCases();
+    void screenNeedBackup();
+    void screenSwitchFromCaelestia();
+    void screenSwitchFromStock();
+    void screenMaskDependents();
     void repairFailureSentenceHasNoTrailingPeriod();
 };
 
@@ -1387,6 +1393,151 @@ void TestSwitch::guiBinaryLookup()
     QCOMPARE(findGuiBinary(cli), cli + QStringLiteral("/caelestia-switch-gui"));
 
     qputenv("PATH", oldPath);
+}
+
+void TestSwitch::screenBlockedCases()
+{
+    Env e;
+    e.setShellPackage(QStringLiteral("caelestia.desktop"));
+    e.backup(Side::Caelestia);
+    FakeOps ops(caelestiaMode(), e.configHome());
+
+    // systemd cannot be queried.
+    Readings bad;
+    bad.systemdError = QStringLiteral("no bus");
+    ScreenModel m = buildScreenModel(finish(bad), e.ctx.paths, &ops);
+    QCOMPARE(m.kind, ScreenModel::Kind::Blocked);
+    QVERIFY(m.message.contains(QStringLiteral("no bus")));
+    QVERIFY(m.message.contains(QStringLiteral("repair")));
+
+    // Inconsistent: plasmashell masked but running.
+    Readings masked = caelestiaMode();
+    masked.plasmashellUnit = unit("masked", "active", "running", "masked");
+    m = buildScreenModel(finish(masked), e.ctx.paths, &ops);
+    QCOMPARE(m.kind, ScreenModel::Kind::Blocked);
+    QVERIFY(m.message.contains(QStringLiteral("masked but still running")));
+
+    // A switch that is waiting for its logout is not a state to switch from.
+    Readings waiting = caelestiaMode();
+    waiting.switchStateMode = QStringLiteral("pending-logout");
+    m = buildScreenModel(finish(waiting), e.ctx.paths, &ops);
+    QCOMPARE(m.kind, ScreenModel::Kind::Blocked);
+
+    // Caelestia not installed.
+    Readings none = stockMode();
+    none.install.installed = false;
+    m = buildScreenModel(none, e.ctx.paths, &ops);
+    QCOMPARE(m.kind, ScreenModel::Kind::Blocked);
+    QVERIFY(m.message.contains(QStringLiteral("not installed")));
+
+    // Neither shell draws panels (valid, but the direction is unclear).
+    Readings noProvider = stockMode();
+    noProvider.caelestiaUnit = unit("loaded", "inactive", "dead", "disabled");
+    noProvider.shellPackage = QStringLiteral("caelestia.desktop");
+    noProvider = finish(noProvider);
+    QCOMPARE(noProvider.provider, Provider::None);
+    m = buildScreenModel(noProvider, e.ctx.paths, &ops);
+    QCOMPARE(m.kind, ScreenModel::Kind::Blocked);
+    QVERIFY(m.message.contains(QStringLiteral("caelestia-switch on")));
+}
+
+void TestSwitch::screenNeedBackup()
+{
+    // No Caelestia-side backup while Caelestia runs: Screen A with a working Backup button.
+    Env e;
+    FakeOps cae(caelestiaMode(), e.configHome());
+    ScreenModel m = buildScreenModel(caelestiaMode(), e.ctx.paths, &cae);
+    QCOMPARE(m.kind, ScreenModel::Kind::NeedBackup);
+    QVERIFY(m.canBackup);
+
+    // The same in stock mode: the button is not offered (it would file the stock config under the Caelestia name).
+    FakeOps stock(stockMode(), e.configHome());
+    m = buildScreenModel(stockMode(), e.ctx.paths, &stock);
+    QCOMPARE(m.kind, ScreenModel::Kind::NeedBackup);
+    QVERIFY(!m.canBackup);
+    QVERIFY(m.message.contains(QStringLiteral("running shell")));
+
+    // A stock-side backup alone does not skip Screen A.
+    e.setShellPackage(QString());
+    e.backup(Side::Stock);
+    QCOMPARE(buildScreenModel(caelestiaMode(), e.ctx.paths, &cae).kind, ScreenModel::Kind::NeedBackup);
+}
+
+void TestSwitch::screenSwitchFromCaelestia()
+{
+    Env e;
+    e.setShellPackage(QStringLiteral("caelestia.desktop"));
+    const QString caeRef = e.backup(Side::Caelestia);
+    FakeOps ops(caelestiaMode(), e.configHome());
+
+    // No stock backup: Screen B, but nothing to restore, and the note says why. No mask checkbox going to stock.
+    ScreenModel m = buildScreenModel(caelestiaMode(), e.ctx.paths, &ops);
+    QCOMPARE(m.kind, ScreenModel::Kind::Switch);
+    QCOMPARE(m.direction, Direction::ToStock);
+    QVERIFY(m.backups.isEmpty());
+    QVERIFY(!m.canSwitch);
+    QVERIFY(m.message.contains(QStringLiteral("no stock-side backup")));
+    QVERIFY(!m.maskShown);
+
+    // With stock backups: only the stock side is offered, newest first.
+    e.setShellPackage(QString());
+    const QString older = e.backup(Side::Stock);
+    QTest::qSleep(1100);   // backup ids have one-second resolution
+    const QString newer = e.backup(Side::Stock);
+    m = buildScreenModel(caelestiaMode(), e.ctx.paths, &ops);
+    QCOMPARE(m.kind, ScreenModel::Kind::Switch);
+    QVERIFY(m.canSwitch);
+    QVERIFY(m.message.isEmpty());
+    QCOMPARE(m.backups.size(), 2);
+    QCOMPARE(m.backups.first().ref(), newer);
+    QCOMPARE(m.backups.last().ref(), older);
+    for (const BackupInfo &b : m.backups) {
+        QVERIFY(b.ref() != caeRef);
+        QCOMPARE(b.side, Side::Stock);
+    }
+}
+
+void TestSwitch::screenSwitchFromStock()
+{
+    Env e;
+    e.setShellPackage(QStringLiteral("caelestia.desktop"));
+    const QString caeRef = e.backup(Side::Caelestia);
+    e.setShellPackage(QString());
+    e.backup(Side::Stock);
+    FakeOps ops(stockMode(), e.configHome());
+
+    const ScreenModel m = buildScreenModel(stockMode(), e.ctx.paths, &ops);
+    QCOMPARE(m.kind, ScreenModel::Kind::Switch);
+    QCOMPARE(m.direction, Direction::ToCaelestia);
+    QVERIFY(m.canSwitch);
+    QCOMPARE(m.backups.size(), 1);
+    QCOMPARE(m.backups.first().ref(), caeRef);           // only the target side
+    QVERIFY(m.maskShown);                                // the checkbox applies when switching to Caelestia
+    QVERIFY(m.maskAllowed && m.maskBlockers.isEmpty() && m.maskWeak.isEmpty());
+    QCOMPARE(m.readings.provider, Provider::Plasma);
+}
+
+void TestSwitch::screenMaskDependents()
+{
+    Env e;
+    e.setShellPackage(QStringLiteral("caelestia.desktop"));
+    e.backup(Side::Caelestia);
+    e.setShellPackage(QString());
+    e.backup(Side::Stock);
+    FakeOps ops(stockMode(), e.configHome());
+
+    // Weak (always WantedBy=plasma-core.target in a live session): allowed, with the units named for the warning.
+    ops.deps[QStringLiteral("plasma-plasmashell.service")] = {QStringLiteral("WantedBy=plasma-core.target")};
+    ScreenModel m = buildScreenModel(stockMode(), e.ctx.paths, &ops);
+    QVERIFY(m.maskAllowed);
+    QCOMPARE(m.maskWeak, QStringList{QStringLiteral("WantedBy=plasma-core.target")});
+
+    // Strong, or unreadable: not allowed, and the blockers are named (the weak one is not a blocker).
+    ops.deps[QStringLiteral("plasma-plasmashell.service")] = {QStringLiteral("WantedBy=plasma-core.target"), QStringLiteral("BoundBy=x.service")};
+    m = buildScreenModel(stockMode(), e.ctx.paths, &ops);
+    QVERIFY(!m.maskAllowed);
+    QCOMPARE(m.maskBlockers, QStringList{QStringLiteral("BoundBy=x.service")});
+    QCOMPARE(m.maskWeak.size(), 1);
 }
 
 void TestSwitch::repairFailureSentenceHasNoTrailingPeriod()

@@ -1,6 +1,6 @@
 # Caelestia KDE Switch App — Spec
 
-*Revised 2026-10-05 (v2.4: result window added; v2.3: post-login service and `post-login` command added; earlier v2.2: mask-only change, `repair` and new state keys added; earlier v2.1: status implemented, version detection amended). Supersedes the earlier terminal-first spec. Working name: `caelestia-switch` (provisional).*
+*Revised 2026-10-06 (v2.5: one main window, screen rules made exact; earlier 2026-10-05 v2.4: result window added; v2.3: post-login service and `post-login` command added; earlier v2.2: mask-only change, `repair` and new state keys added; earlier v2.1: status implemented, version detection amended). Supersedes the earlier terminal-first spec. Working name: `caelestia-switch` (provisional).*
 
 ## Purpose
 
@@ -41,9 +41,16 @@ Shows: plasmashell status, the source of the installed Caelestia, and its versio
 - a checkbox (see rules below);
 - a **Switch** button.
 
-### Result window (first batch of the GUI, decided 2026-10-05; architecture D22)
+### Result banner (first batch of the GUI, decided 2026-10-05; architecture D22; since 2026-10-06 the banner of the main window, D23)
 
-A small window that tells the user what happened to the last switch. The post-login service opens it after every switch, together with the desktop notification (both, by the user's choice), and it also opens when the app is started by hand. It shows the result (switch complete / rolled back with the cause / did not complete or interrupted, with "Run 'caelestia-switch repair' in a terminal ..."), the current readings underneath, and a Close button; closing it marks the result as seen. With nothing waiting it shows a neutral heading and the readings. It runs in its own transient user service, so it is independent of both shells. Screens A and B follow in a later batch.
+A banner at the top of the app's one window (it began as a window of its own) that tells the user what happened to the last switch. The post-login service opens it after every switch, together with the desktop notification (both, by the user's choice), and it also opens when the app is started by hand. It shows the result (switch complete / rolled back with the cause / did not complete or interrupted, with "Run 'caelestia-switch repair' in a terminal ..."), the current readings underneath, and a Close button; closing it marks the result as seen. With nothing waiting it shows a neutral heading and the readings. It runs in its own transient user service, so it is independent of both shells. Screens A and B follow in a later batch.
+
+### Screen rules made exact (decided 2026-10-06; architecture D23)
+
+- The window starts on a loading page (busy bar) while the readings are read. Then: **Blocked** (a message; no switching) when systemd cannot be queried, the state is inconsistent (including a switch waiting for its logout), Caelestia is not installed, or neither shell provides panels; **Screen A** when no Caelestia-side backup exists; otherwise **Screen B**.
+- **Screen A:** the Backup button is offered only while Caelestia is the running shell. In stock mode the screen only explains that the first Caelestia-side backup has to be taken while Caelestia runs, because a backup taken in stock mode would hold the stock configuration under the Caelestia name.
+- **Screen B:** the direction follows the running mode. The dropdown lists the backups of the **target** side only (newest preselected). The checkbox "Also disable plasmashell" appears only when switching to Caelestia; a strong dependent greys it out and names the units, a weak one shows a warning. The Switch button becomes active in the second part of the GUI work (batch 2b), together with the warning dialog; until then it is inactive.
+- The pending result (if any) is the banner above all of this, with a Dismiss button.
 
 ## Switch rules (confirmed 2026-09-30)
 
