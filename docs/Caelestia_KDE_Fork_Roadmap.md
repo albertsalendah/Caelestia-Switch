@@ -65,7 +65,7 @@ The switch rules, graceful Caelestia quit (D18), helper-unit handling, state fil
 
 Loading screen, Screen A (backup needed), Screen B (switch, dropdown, checkbox), the "save your work" warning, and the `.desktop` entry reachable from both launchers. Built with C++, Qt6 Widgets and KF6 (architecture doc D16); the GUI only calls the core library.
 
-**Progress (2026-10-05):** decided to build it in batches, starting with the **result window** (the "switch finished" view; architecture D22): `describeResult` / `markSeen` in the core, `src/gui/resultwindow.*`, and the post-login service opening the window together with the notification. Implemented and unit-tested (`test_switch` 39 cases, new `test_gui` 5 cases); live test on the ASUS pending. Screens A and B (loading screen, backup needed, switch with dropdown and checkbox, warning dialog) are the next batch.
+**Progress (2026-10-05):** decided to build it in batches, starting with the **result window** (the "switch finished" view; architecture D22): `describeResult` / `markSeen` in the core, `src/gui/resultwindow.*`, and the post-login service opening the window together with the notification. Implemented, unit-tested (`test_switch` 39 cases, new `test_gui` 5 cases) and live-tested on the ASUS on 2026-10-06 in both modes (window after login with one notification, Close clears the flag, no window on a login with nothing pending, the status page). Screens A and B (loading screen, backup needed, switch with dropdown and checkbox, warning dialog) are the next batch.
 
 **Done when:** the whole flow works from the GUI in both Caelestia and stock Plasma on the test laptop.
 
