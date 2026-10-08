@@ -219,6 +219,23 @@ SwitchState makeFailedToStock(Env &e)
     return e.state();
 }
 
+// A Screen B model for checkChoice tests: `ids` are backup ids of the target side.
+ScreenModel choiceModel(Direction d, const QStringList &ids)
+{
+    ScreenModel m;
+    m.kind = ScreenModel::Kind::Switch;
+    m.direction = d;
+    for (const QString &id : ids) {
+        BackupInfo b;
+        b.side = d == Direction::ToStock ? Side::Stock : Side::Caelestia;
+        b.id = id;
+        m.backups << b;
+    }
+    m.canSwitch = !ids.isEmpty();
+    m.maskShown = d == Direction::ToCaelestia;
+    return m;
+}
+
 } // namespace
 
 class TestSwitch : public QObject
@@ -262,6 +279,9 @@ private slots:
     void describeResultCases();
     void markSeenClearsUnseen();
     void guiBinaryLookup();
+    void cliBinaryLookup();
+    void checkChoiceCases();
+    void logoutWarningIsTheApprovedText();
     void screenBlockedCases();
     void screenNeedBackup();
     void screenSwitchFromCaelestia();
@@ -1393,6 +1413,119 @@ void TestSwitch::guiBinaryLookup()
     QCOMPARE(findGuiBinary(cli), cli + QStringLiteral("/caelestia-switch-gui"));
 
     qputenv("PATH", oldPath);
+}
+
+void TestSwitch::cliBinaryLookup()
+{
+    const QByteArray oldPath = qgetenv("PATH");
+    qputenv("PATH", "/nonexistent-for-the-test");
+    const auto makeExe = [](const QString &path, bool exec) {
+        writeFile(path, QStringLiteral("#!/bin/sh\n"));
+        QFile::setPermissions(path, exec ? QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner
+                                         : QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    };
+
+    QTemporaryDir d;
+    const QString gui = d.path() + QStringLiteral("/gui");
+    QDir().mkpath(gui);
+    QVERIFY(findCliBinary(gui).isEmpty());
+
+    // Not executable: ignored.
+    makeExe(d.path() + QStringLiteral("/cli/caelestia-switch"), false);
+    QVERIFY(findCliBinary(gui).isEmpty());
+
+    // The build-tree layout (../cli/ next to the GUI directory).
+    makeExe(d.path() + QStringLiteral("/cli/caelestia-switch"), true);
+    QCOMPARE(findCliBinary(gui), d.path() + QStringLiteral("/cli/caelestia-switch"));
+
+    // The installed layout (next to the GUI) wins.
+    makeExe(gui + QStringLiteral("/caelestia-switch"), true);
+    QCOMPARE(findCliBinary(gui), gui + QStringLiteral("/caelestia-switch"));
+
+    qputenv("PATH", oldPath);
+}
+
+void TestSwitch::checkChoiceCases()
+{
+    const QStringList ids = {QStringLiteral("20261007_124759"), QStringLiteral("20261006_114338")};
+    SwitchChoice toStock;
+    toStock.direction = Direction::ToStock;
+    toStock.targetRef = QStringLiteral("stock/20261006_114338");
+
+    // Fine: the same direction, the backup is still listed.
+    ChoiceCheck c = checkChoice(choiceModel(Direction::ToStock, ids), toStock);
+    QVERIFY2(c.ok, qPrintable(c.problem));
+    QVERIFY(!c.needsWeakMaskConfirm);
+
+    // The state changed behind the window: blocked, with the model's own message.
+    ScreenModel blocked;
+    blocked.kind = ScreenModel::Kind::Blocked;
+    blocked.message = QStringLiteral("Switching is not available right now: neither shell is running.");
+    c = checkChoice(blocked, toStock);
+    QVERIFY(!c.ok);
+    QCOMPARE(c.problem, blocked.message);
+    ScreenModel need;                       // Blocked-like kind without a message still gives a reason
+    need.kind = ScreenModel::Kind::NeedBackup;
+    QVERIFY(!checkChoice(need, toStock).problem.isEmpty());
+
+    // The running mode flipped (a switch finished behind the window).
+    c = checkChoice(choiceModel(Direction::ToCaelestia, ids), toStock);
+    QVERIFY(!c.ok);
+    QVERIFY(c.problem.contains(QStringLiteral("running mode changed")));
+
+    // The selected backup is gone, or none was selected.
+    SwitchChoice gone = toStock;
+    gone.targetRef = QStringLiteral("stock/20200101_000000");
+    QVERIFY(checkChoice(choiceModel(Direction::ToStock, ids), gone).problem.contains(QStringLiteral("no longer available")));
+    gone.targetRef.clear();
+    QVERIFY(!checkChoice(choiceModel(Direction::ToStock, ids), gone).ok);
+    // A backup of the other side with the same id does not count.
+    gone.targetRef = QStringLiteral("caelestia/20261006_114338");
+    QVERIFY(!checkChoice(choiceModel(Direction::ToStock, ids), gone).ok);
+
+    // No backup at all.
+    ScreenModel empty = choiceModel(Direction::ToStock, {});
+    empty.message = QStringLiteral("There is no stock-side backup.");
+    c = checkChoice(empty, toStock);
+    QVERIFY(!c.ok);
+    QCOMPARE(c.problem, empty.message);
+
+    // To Caelestia with the mask.
+    SwitchChoice toCae;
+    toCae.direction = Direction::ToCaelestia;
+    toCae.targetRef = QStringLiteral("caelestia/20261007_075026");
+    ScreenModel caeModel = choiceModel(Direction::ToCaelestia, {QStringLiteral("20261007_075026")});
+    toCae.mask = false;
+    QVERIFY(checkChoice(caeModel, toCae).ok);
+    toCae.mask = true;
+    c = checkChoice(caeModel, toCae);                               // no dependents at all
+    QVERIFY(c.ok && !c.needsWeakMaskConfirm);
+    caeModel.maskWeak = {QStringLiteral("WantedBy=plasma-core.target")};
+    c = checkChoice(caeModel, toCae);                               // weak: ask first
+    QVERIFY(c.ok && c.needsWeakMaskConfirm);
+    QCOMPARE(c.weak, caeModel.maskWeak);
+    toCae.mask = false;
+    QVERIFY(!checkChoice(caeModel, toCae).needsWeakMaskConfirm);    // not masking: nothing to ask
+    toCae.mask = true;
+    caeModel.maskAllowed = false;                                   // strong: refused, units named
+    caeModel.maskBlockers = {QStringLiteral("BoundBy=x.service")};
+    c = checkChoice(caeModel, toCae);
+    QVERIFY(!c.ok);
+    QVERIFY(c.problem.contains(QStringLiteral("BoundBy=x.service")));
+
+    // The checkbox means nothing when going to stock.
+    SwitchChoice stockMask = toStock;
+    stockMask.mask = true;
+    c = checkChoice(choiceModel(Direction::ToStock, ids), stockMask);
+    QVERIFY(c.ok && !c.needsWeakMaskConfirm);
+}
+
+void TestSwitch::logoutWarningIsTheApprovedText()
+{
+    // Wording confirmed by the user on 2026-10-02 (architecture D19); a change here must be a decision, not an accident.
+    QCOMPARE(logoutWarningText(),
+             QStringLiteral("This will log you out. Save your work now. This window will close when the session ends "
+                            "and continue running in the background until it finish."));
 }
 
 void TestSwitch::screenBlockedCases()

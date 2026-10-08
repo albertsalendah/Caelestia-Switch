@@ -7,6 +7,7 @@
 #include "consistency.h"
 #include "install.h"
 #include "readings.h"
+#include "settings.h"
 
 using namespace cs;
 
@@ -106,6 +107,7 @@ private slots:
     void versionFromCheckoutOnly();
     void markerMatchingAndStale();
     void notInstalled();
+    void settingsRoundTrip();
 };
 
 void TestCore::versionEnv()
@@ -335,6 +337,40 @@ void TestCore::notInstalled()
     // shell.qml without the unit file is not a complete install.
     writeFile(h.home() + "/.config/quickshell/caelestia/shell.qml", QStringLiteral("//\n"));
     QVERIFY(!detectInstall(h.home(), h.appCfg(), QString()).installed);
+}
+
+void TestCore::settingsRoundTrip()
+{
+    QTemporaryDir d;
+    const QString dir = d.path() + QStringLiteral("/appcfg");
+
+    // No file: the defaults (ask before masking).
+    QVERIFY(readSettings(dir).confirmWeakMask);
+
+    // "Don't ask again" is stored and read back; the directory is created on demand.
+    AppSettings s;
+    s.confirmWeakMask = false;
+    QString err;
+    QVERIFY2(writeSettings(dir, s, &err), qPrintable(err));
+    QVERIFY(!readSettings(dir).confirmWeakMask);
+    s.confirmWeakMask = true;
+    QVERIFY(writeSettings(dir, s));
+    QVERIFY(readSettings(dir).confirmWeakMask);
+
+    // Unknown keys, comments and bad values are ignored (the default stays).
+    writeFile(dir + QStringLiteral("/settings"), QStringLiteral("# note\nsomethingElse=1\nconfirmWeakMask=maybe\n"));
+    QVERIFY(readSettings(dir).confirmWeakMask);
+    writeFile(dir + QStringLiteral("/settings"), QStringLiteral("somethingElse=1\n confirmWeakMask = FALSE \n"));
+    QVERIFY(!readSettings(dir).confirmWeakMask);
+
+    // Deleting the file resets everything.
+    QVERIFY(QFile::remove(dir + QStringLiteral("/settings")));
+    QVERIFY(readSettings(dir).confirmWeakMask);
+
+    // A directory that cannot be created: reported, not silently ignored.
+    writeFile(d.path() + QStringLiteral("/blocker"), QStringLiteral("a file\n"));
+    QVERIFY(!writeSettings(d.path() + QStringLiteral("/blocker/sub"), s, &err));
+    QVERIFY(err.contains(QStringLiteral("cannot")));
 }
 
 QTEST_GUILESS_MAIN(TestCore)

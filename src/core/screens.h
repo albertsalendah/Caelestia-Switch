@@ -41,6 +41,28 @@ struct ScreenModel {
     Readings readings;                          // the readings the model was built from
 };
 
+// What the user picked on Screen B when pressing Switch (Phase A4 batch 2b, architecture D24).
+struct SwitchChoice {
+    Direction direction = Direction::ToStock;   // the direction the window was showing
+    QString targetRef;                          // the backup selected in the dropdown ("side/id")
+    bool mask = false;                          // the "also disable plasmashell" checkbox (only when going to Caelestia)
+};
+
+// The answer to "may this choice be started now?", worked out against a freshly read model.
+struct ChoiceCheck {
+    bool ok = false;
+    QString problem;                // !ok: why nothing was started (shown under the Switch button)
+    bool needsWeakMaskConfirm = false;   // ok, but the mask has weak dependents: ask first (unless switched off in the settings)
+    QStringList weak;               // the weak dependents to name in that question
+};
+
+// The window can be old (a switch may have started behind it, or the state changed): the Switch button re-reads
+// the state and checks the choice against the fresh model before anything starts. Pure and unit-tested.
+ChoiceCheck checkChoice(const ScreenModel &fresh, const SwitchChoice &shown);
+
+// The user-approved warning shown before the switch starts (architecture D19; wording confirmed 2026-10-02).
+QString logoutWarningText();
+
 // Decides the screen. `ops` is used only for the live plasmashell dependency check (checkMaskPlasmashell).
 ScreenModel buildScreenModel(const Readings &readings, const BackupPaths &paths, SwitchOps *ops);
 

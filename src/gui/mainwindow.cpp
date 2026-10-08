@@ -126,14 +126,21 @@ MainWindow::MainWindow(const cs::ResultView &pending, QWidget *parent) : QWidget
     m_maskNote = wrapped();
     m_note = wrapped();
     m_switch = new QPushButton(QStringLiteral("Switch"));
-    m_switch->setEnabled(false);   // batch 2a: switching from this window arrives with batch 2b
-    m_switch->setToolTip(QStringLiteral("Switching from this window arrives in the next update. For now use 'caelestia-switch on' or 'off' in a terminal."));
+    m_switch->setEnabled(false);   // enabled by showModel() when there is a backup to restore
+    m_switchStatus = wrapped();
+    m_switchStatus->setVisible(false);
+    connect(m_switch, &QPushButton::clicked, this, [this]() {
+        if (onSwitch) {
+            onSwitch(choice());
+        }
+    });
     switchLayout->addWidget(m_info);
     switchLayout->addWidget(m_direction);
     switchLayout->addLayout(comboRow);
     switchLayout->addWidget(m_mask);
     switchLayout->addWidget(m_maskNote);
     switchLayout->addWidget(m_note);
+    switchLayout->addWidget(m_switchStatus);
     switchLayout->addWidget(m_switch, 0, Qt::AlignRight);
     switchLayout->addStretch(1);
     m_stack->addWidget(switchPage);
@@ -164,7 +171,7 @@ MainWindow::MainWindow(const cs::ResultView &pending, QWidget *parent) : QWidget
     layout->addWidget(m_details, 1);
     layout->addWidget(close, 0, Qt::AlignRight);
 
-    resize(620, 440);
+    resize(640, 580);   // the banner takes about 150 px; 620x440 clipped the info text under it (live test 2026-10-07)
     showLoading();
 }
 
@@ -182,6 +189,7 @@ void MainWindow::showModel(const cs::ScreenModel &m, const QString &readingsText
 {
     m_details->setPlainText(readingsText);
     m_backupStatus->clear();
+    setSwitchStatus(QString());
 
     switch (m.kind) {
     case cs::ScreenModel::Kind::Blocked:
@@ -197,6 +205,8 @@ void MainWindow::showModel(const cs::ScreenModel &m, const QString &readingsText
         break;
     }
 
+    m_shownDirection = m.direction;
+    m_maskShown = m.maskShown;
     const cs::Readings &r = m.readings;
     const QString mode = r.provider == cs::Provider::Caelestia ? QStringLiteral("Caelestia") : QStringLiteral("stock Plasma");
     m_info->setText(QStringLiteral("Current mode: %1\nplasmashell: %2\nCaelestia: %3, %4")
@@ -224,7 +234,34 @@ void MainWindow::showModel(const cs::ScreenModel &m, const QString &readingsText
 
     m_note->setText(m.message);
     m_note->setVisible(!m.message.isEmpty());
+    m_switch->setEnabled(m.canSwitch);
+    m_switch->setToolTip(m.canSwitch ? QString() : QStringLiteral("There is no backup to restore."));
     m_stack->setCurrentIndex(static_cast<int>(Page::Switch));
+}
+
+cs::SwitchChoice MainWindow::choice() const
+{
+    cs::SwitchChoice c;
+    c.direction = m_shownDirection;
+    c.targetRef = m_combo->currentData().toString();
+    c.mask = m_maskShown && m_mask->isChecked();
+    return c;
+}
+
+void MainWindow::setSwitchStatus(const QString &text)
+{
+    m_switchStatus->setText(text);
+    m_switchStatus->setVisible(!text.isEmpty());
+}
+
+QString MainWindow::switchStatus() const { return m_switchStatus->text(); }
+
+void MainWindow::showStarted(const QString &text)
+{
+    m_switch->setEnabled(false);
+    m_combo->setEnabled(false);
+    m_mask->setEnabled(false);
+    setSwitchStatus(text);
 }
 
 MainWindow::Page MainWindow::page() const

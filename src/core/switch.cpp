@@ -860,6 +860,20 @@ QString findGuiBinary(const QString &cliDir)
     return QStandardPaths::findExecutable(name);
 }
 
+QString findCliBinary(const QString &guiDir)
+{
+    const QString name = QStringLiteral("caelestia-switch");
+    const QStringList candidates = {guiDir + QLatin1Char('/') + name,
+                                    QDir::cleanPath(guiDir + QStringLiteral("/../cli/") + name)};
+    for (const QString &c : candidates) {
+        const QFileInfo fi(c);
+        if (fi.isFile() && fi.isExecutable()) {
+            return fi.absoluteFilePath();
+        }
+    }
+    return QStandardPaths::findExecutable(name);
+}
+
 QString postLoginUnitName()
 {
     return QStringLiteral("caelestia-switch-post-login.service");

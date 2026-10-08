@@ -47,7 +47,9 @@ private slots:
     void needBackupPage();
     void switchPageToStock();
     void switchPageToCaelestiaWithMask();
-    void switchButtonIsInactiveInBatch2a();
+    void switchButtonFollowsTheModel();
+    void choiceAndCallback();
+    void statusAndStarted();
     void bannerAndSeen();
     void closingWithoutDismissMarksSeenOnce();
     void noBannerNoSeenCallback();
@@ -151,11 +153,83 @@ void TestGui::switchPageToCaelestiaWithMask()
     QVERIFY(w.maskNote().contains(QStringLiteral("RequiredBy=something.service")));
 }
 
-void TestGui::switchButtonIsInactiveInBatch2a()
+void TestGui::switchButtonFollowsTheModel()
 {
     MainWindow w{cs::ResultView()};
-    w.showModel(switchModel(cs::Direction::ToStock), QString());
-    QVERIFY(!w.switchButton()->isEnabled());             // batch 2b turns it on, together with the warning dialog
+    QVERIFY(!w.switchButton()->isEnabled());             // nothing loaded yet
+    cs::ScreenModel m = switchModel(cs::Direction::ToStock);
+    w.showModel(m, QString());
+    QVERIFY(w.switchButton()->isEnabled());              // there is a backup to restore (batch 2b)
+    m.backups.clear();
+    m.canSwitch = false;
+    w.showModel(m, QString());
+    QVERIFY(!w.switchButton()->isEnabled());
+}
+
+void TestGui::choiceAndCallback()
+{
+    MainWindow w{cs::ResultView()};
+    w.show();
+    cs::SwitchChoice got;
+    int calls = 0;
+    w.onSwitch = [&](const cs::SwitchChoice &c) { got = c; ++calls; };
+
+    // To Caelestia: the second backup selected and the mask ticked.
+    cs::ScreenModel m = switchModel(cs::Direction::ToCaelestia);
+    m.maskShown = true;
+    w.showModel(m, QString());
+    w.backupCombo()->setCurrentIndex(1);
+    w.maskCheck()->setChecked(true);
+    w.switchButton()->click();
+    QCOMPARE(calls, 1);
+    QCOMPARE(got.direction, cs::Direction::ToCaelestia);
+    QCOMPARE(got.targetRef, QStringLiteral("caelestia/20261005_090228"));
+    QVERIFY(got.mask);
+
+    // To stock: the checkbox does not apply, whatever its state, and the newest backup is the default.
+    m = switchModel(cs::Direction::ToStock);
+    w.showModel(m, QString());
+    w.maskCheck()->setChecked(true);
+    const cs::SwitchChoice c = w.choice();
+    QCOMPARE(c.direction, cs::Direction::ToStock);
+    QCOMPARE(c.targetRef, QStringLiteral("stock/20261006_114338"));
+    QVERIFY(!c.mask);
+    w.switchButton()->click();
+    QCOMPARE(calls, 2);
+    QVERIFY(!got.mask);
+
+    // A window without a handler does not crash on the click.
+    w.onSwitch = nullptr;
+    w.switchButton()->click();
+    QCOMPARE(calls, 2);
+}
+
+void TestGui::statusAndStarted()
+{
+    MainWindow w{cs::ResultView()};
+    w.show();
+    cs::ScreenModel m = switchModel(cs::Direction::ToCaelestia);
+    m.maskShown = true;
+    w.showModel(m, QString());
+    QVERIFY(w.switchStatus().isEmpty());
+
+    w.setSwitchStatus(QStringLiteral("Nothing was started: x."));
+    QCOMPARE(w.switchStatus(), QStringLiteral("Nothing was started: x."));
+    w.showModel(m, QString());                           // a reload clears the old status
+    QVERIFY(w.switchStatus().isEmpty());
+
+    // Started: everything goes inactive and the text says what happens next.
+    w.showStarted(QStringLiteral("The switch has started."));
+    QCOMPARE(w.switchStatus(), QStringLiteral("The switch has started."));
+    QVERIFY(!w.switchButton()->isEnabled());
+    QVERIFY(!w.backupCombo()->isEnabled());
+    QVERIFY(!w.maskCheck()->isEnabled());
+
+    // A fresh model (for example the post-login reopen) makes the page usable again.
+    w.showModel(m, QString());
+    QVERIFY(w.switchButton()->isEnabled());
+    QVERIFY(w.backupCombo()->isEnabled());
+    QVERIFY(w.maskCheck()->isEnabled());
 }
 
 void TestGui::bannerAndSeen()

@@ -155,6 +155,11 @@ OpResult markSeen(const QString &stateFile);
 // Empty if none is found. `cliDir` is the directory of the CLI binary.
 QString findGuiBinary(const QString &cliDir);
 
+// The CLI binary that goes with the GUI (the executor `run-switch` is a CLI command, and `launchSwitch` must be
+// given that path, not the GUI's): next to the GUI (installed layout), then ../cli/ (build tree), then PATH.
+// Empty if none is found. `guiDir` is the directory of the GUI binary.
+QString findCliBinary(const QString &guiDir);
+
 struct PostLoginResult {
     bool ran = false;       // false: no switch was waiting for its login, nothing to report
     bool ok = true;         // the expected final state was reached

@@ -10,6 +10,7 @@ add_library(switchcore STATIC
     switchops.cpp switchops.h
     switch.cpp switch.h
     screens.cpp screens.h
+    settings.cpp settings.h
     fsutil.h)
 target_include_directories(switchcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(switchcore PRIVATE CS_VERSION="${PROJECT_VERSION}")

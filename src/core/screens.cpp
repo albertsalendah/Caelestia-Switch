@@ -7,6 +7,52 @@ QString targetLabel(Direction direction)
     return direction == Direction::ToStock ? QStringLiteral("stock Plasma") : QStringLiteral("Caelestia");
 }
 
+QString logoutWarningText()
+{
+    return QStringLiteral("This will log you out. Save your work now. "
+                          "This window will close when the session ends and continue running in the background until it finish.");
+}
+
+ChoiceCheck checkChoice(const ScreenModel &fresh, const SwitchChoice &shown)
+{
+    ChoiceCheck c;
+    const auto no = [&c](const QString &why) {
+        c.ok = false;
+        c.problem = why;
+        return c;
+    };
+    if (fresh.kind != ScreenModel::Kind::Switch) {
+        return no(fresh.message.isEmpty() ? QStringLiteral("the state of the system changed since this window was loaded")
+                                          : fresh.message);
+    }
+    if (fresh.direction != shown.direction) {
+        return no(QStringLiteral("the running mode changed since this window was loaded; check the page and try again"));
+    }
+    if (!fresh.canSwitch) {
+        return no(fresh.message.isEmpty() ? QStringLiteral("there is no backup to restore") : fresh.message);
+    }
+    bool found = false;
+    for (const BackupInfo &b : fresh.backups) {
+        found = found || b.ref() == shown.targetRef;
+    }
+    if (shown.targetRef.isEmpty() || !found) {
+        return no(QStringLiteral("the selected backup is no longer available; choose one from the list"));
+    }
+    // The checkbox only applies when switching to Caelestia.
+    if (shown.mask && shown.direction == Direction::ToCaelestia) {
+        if (!fresh.maskShown || !fresh.maskAllowed) {
+            return no(QStringLiteral("plasmashell cannot be disabled: something depends on it (%1)")
+                          .arg(fresh.maskBlockers.join(QStringLiteral(", "))));
+        }
+        if (!fresh.maskWeak.isEmpty()) {
+            c.needsWeakMaskConfirm = true;
+            c.weak = fresh.maskWeak;
+        }
+    }
+    c.ok = true;
+    return c;
+}
+
 ScreenModel buildScreenModel(const Readings &r, const BackupPaths &paths, SwitchOps *ops)
 {
     ScreenModel m;

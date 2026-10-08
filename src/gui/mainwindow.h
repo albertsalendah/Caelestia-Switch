@@ -57,8 +57,19 @@ public:
     QPushButton *switchButton() const { return m_switch; }
     QString detailsText() const;
 
+    // The user's current pick on Screen B: the direction the page shows, the selected backup, the mask checkbox.
+    cs::SwitchChoice choice() const;
+    // A line under the Switch button (why nothing was started); empty hides it. Cleared by every showModel().
+    void setSwitchStatus(const QString &text);
+    QString switchStatus() const;
+    // The switch was handed to the background service: the controls go inactive and `text` explains what happens next.
+    void showStarted(const QString &text);
+
     // Called when the Backup button is pressed (Screen A).
     std::function<void()> onBackup;
+    // Called when the Switch button is pressed (Screen B). The caller re-reads the state, asks the questions and
+    // starts the switch (src/gui/main.cpp); the window only reports the choice.
+    std::function<void(const cs::SwitchChoice &)> onSwitch;
     // Called once when the pending result has been shown: the banner was dismissed or the window closed.
     std::function<void()> onSeen;
 
@@ -85,6 +96,9 @@ private:
     QLabel *m_maskNote = nullptr;
     QLabel *m_note = nullptr;
     QPushButton *m_switch = nullptr;
+    QLabel *m_switchStatus = nullptr;
+    cs::Direction m_shownDirection = cs::Direction::ToStock;
+    bool m_maskShown = false;
 
     QToolButton *m_detailsToggle = nullptr;
     QPlainTextEdit *m_details = nullptr;
